@@ -1,9 +1,9 @@
 """
-Model pricing config - 按 model name 查官方 API 价，来源无关。
-参考: docs/rfc.md
-更新日期: 2026-05
+Model pricing config: lookup official API prices by model name, independent of source.
+Reference: docs/rfc.md
+Updated: 2026-05
 """
-# model name → 官方价（$/M tokens）
+# model name -> official price ($/M tokens)
 MODEL_PRICING = {
     "gpt-5.5": {"input": 5.0, "cached": 0.5, "output": 30.0},
     "gpt-5.4": {"input": 2.5, "cached": 0.25, "output": 15.0},
@@ -34,7 +34,7 @@ MODEL_PRICING = {
     "deepseek-reasoner": {"input": 0.14, "cached": 0.0028, "output": 0.28},
 }
 
-# modelID 变体 → 规范 model name（用于匹配）
+# modelID variants -> canonical model names
 MODEL_ALIASES = {
     "antigravity-gemini-3-flash": "gemini-3-flash",
     "deepseek-chat": "deepseek-v4-flash",
@@ -49,18 +49,18 @@ Pricing = dict[str, float]
 
 
 def get_pricing(model_id: str) -> Pricing | None:
-    """按 model_id 查价，支持 alias。返回 {input, cached?, output} 或 None。"""
+    """Look up pricing by model_id with alias support. Returns {input, cached?, output} or None."""
     model_lower = (model_id or "").lower().strip()
     if not model_lower:
         return None
-    # 直接匹配
+    # direct match
     if model_lower in MODEL_PRICING:
         return MODEL_PRICING[model_lower].copy()
-    # alias 映射
+    # alias mapping
     if model_lower in MODEL_ALIASES:
         canonical = MODEL_ALIASES[model_lower]
         return MODEL_PRICING.get(canonical, {}).copy()
-    # 部分匹配：antigravity-gemini-* → gemini-*
+    # partial match: antigravity-gemini-* -> gemini-*
     if "antigravity-" in model_lower:
         base = model_lower.replace("antigravity-", "")
         if base in MODEL_PRICING:
@@ -69,7 +69,7 @@ def get_pricing(model_id: str) -> Pricing | None:
             return MODEL_PRICING["gemini-3-flash"].copy()
         if "gemini-3-pro" in model_lower:
             return MODEL_PRICING["gemini-3-pro"].copy()
-    # claude 变体
+    # Claude variants
     if "opus" in model_lower and "claude" in model_lower:
         if "fast" in model_lower:
             return MODEL_PRICING["claude-opus-4-6-fast"].copy()
@@ -107,7 +107,7 @@ def calc_cost(
     cache_write_tokens: int = 0,
     cache_write_1h_tokens: int = 0,
 ) -> float:
-    """按 pricing 计算成本（美元）。"""
+    """Calculate cost in USD from pricing."""
     if not pricing:
         return 0.0
     inp = pricing.get("input", 0) or 0

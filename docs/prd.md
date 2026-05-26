@@ -1,176 +1,161 @@
-# PRD：AI 活跃时间估算
+# PRD: AI Active Time Estimation
 
-## 1. 背景
+## 1. Background
 
-`auto_usage.py` 目前已经能把多平台 token 用量统一汇总成两种输出：
+`auto_usage.py` already aggregates multi-platform token usage into two outputs:
 
-- stdout 表格
-- `token_usage_dashboard.png`
+- a terminal table
+- a desktop dashboard image
 
-它回答的是用了多少 token、折合多少钱，但还不能回答另一个很重要的问题：AI 一共工作了多久。
+It answers how many tokens were used and the API-equivalent cost, but it does not answer how long AI agents were actively working.
 
-这里的目标不是估算真实 CPU 计算时间，也不是估算人的注意力时间，而是估算 AI 被触发后持续处理任务的活跃时间窗。
+The goal is not to estimate true compute time or human attention time. The goal is to estimate active task windows after an AI agent is triggered.
 
-## 2. 目标
+## 2. Goals
 
-在 `auto_usage.py` 中新增 AI 活跃时间估算能力，基于本地已有日志输出：
+Add AI active time estimation to `auto_usage.py` using local logs:
 
-- 每日 AI 活跃时间（小时）
-- 总 AI 活跃时间（小时）
-- 新增一张 dashboard 子图，用于展示每日 AI 活跃时间趋势
+- daily AI active time in hours
+- total AI active time in hours
+- a new dashboard subplot showing the daily trend
 
-## 3. 非目标
+## 3. Non-Goals
 
-- 不统计 Cursor
-- 不统计 GLM / Cloud Code
-- 不估算真实 compute time
-- 不做人类工作时间分析
-- 不做 session 语义搜索或对话内容回放
+- Do not count Cursor.
+- Do not count GLM or Cloud Code for active time.
+- Do not estimate true compute time.
+- Do not analyze human working time.
+- Do not replay conversations or run semantic search over sessions.
 
-## 4. 第一版范围
+## 4. V1 Scope
 
-仅统计两个数据源：
+V1 counts two sources:
 
+- OpenCode, excluding GLM providers
 - Codex
-- OpenCode（排除 GLM provider）
 
-采用 `turn window`，不采用 `session window`。
+The metric uses turn windows rather than session windows.
 
-## 5. 核心定义
+## 5. Core Definition
 
-### 5.1 指标名称
+### 5.1 Metric Name
 
-英文：`AI Active Time (cumulative est.)`
+`AI Active Time (cumulative est.)`
 
-中文：`AI 活跃时间估算`
+### 5.2 Turn Window
 
-### 5.2 什么是 turn window
+A turn window is one estimated unit of agent work:
 
-一轮 turn window 定义为：
+- Start: the user sends a task or message.
+- End: the agent completes the corresponding output or task.
 
-- 开始：用户发出一轮任务或消息，AI 开始处理
-- 结束：这一轮 AI 完成输出或任务完成
+This is an estimated work window, not exact compute time.
 
-这是一个工作时间窗估算，不是精确 compute time。
+### 5.3 Why Not Session Windows
 
-### 5.3 为什么不用 session window
+Session windows include idle time and tend to overcount. Turn windows track request-level activity and keep the error boundary easier to reason about.
 
-session window 会把长时间 idle 一起算进去，偏高。
-
-turn window 更贴近实际：按一轮一轮请求来算，误差更可控。
-
-## 6. 数据源定义
+## 6. Data Sources
 
 ### 6.1 OpenCode
 
-数据源：`~/.local/share/opencode/opencode.db`
+Data source: `~/.local/share/opencode/opencode.db`
 
-依赖字段：
+Required fields:
 
-- `message.session_id`
-- `message.time_created`
-- `message.data.role`
-- `message.data.providerID`
+- `session_id`
+- `time_created`
+- `data.role`
+- `data.providerID`
+- `data.modelID`
 
-第一版规则：
+V1 rules:
 
-- 只看 `role in ('user', 'assistant')`
-- 排除 `providerID` 属于 GLM provider 的 assistant 消息
-- 对每个 session 按时间排序
-- 每个 user 消息开启一个 pending turn
-- 后续 assistant 消息持续延长该 turn
-- 下一个 user 消息到来前，如果上一轮已有 assistant 输出，则关闭上一轮
-- 文件结束时，如 pending turn 已有 assistant 输出，则关闭
+- Keep only `role in ('user', 'assistant')`.
+- Exclude assistant messages from GLM providers.
+- Sort each session by time.
+- Each user message starts a pending turn.
+- Assistant messages extend the current turn.
+- If the next user message arrives and the previous turn has assistant output, close the previous turn.
+- At session end, close a pending turn only if it has assistant output.
 
 ### 6.2 Codex
 
-数据源：`~/.codex/sessions/YYYY/MM/DD/*.jsonl`
+Data source: `~/.codex/sessions/YYYY/MM/DD/*.jsonl`
 
-依赖事件：
+Required events:
 
-- `event_msg.payload.type = user_message`
-- `event_msg.payload.type = task_complete`
+- `event_msg.payload.type == user_message`
+- `event_msg.payload.type == task_complete`
 
-第一版规则：
+V1 rules:
 
-- `user_message` 作为 turn 开始
-- 最近一次对应的 `task_complete` 作为 turn 结束
-- 若 session 结束时仍无 `task_complete`，则回退到最后事件时间作为结束
+- `user_message` starts a turn.
+- The matching `task_complete` ends the turn.
+- If a session ends without `task_complete`, fall back to the last event timestamp.
 
-## 7. 聚合逻辑
+## 7. Aggregation
 
-### 7.1 每个 turn 生成一个区间
+### 7.1 Interval Model
 
-区间结构：
+Each turn produces one interval:
 
-- `source`
-- `start_time`
-- `end_time`
+```python
+(start_datetime, end_datetime)
+```
 
-### 7.2 按天切分
+### 7.2 Day Splitting
 
-跨天区间要切分成多段，分别记到对应日期。
+Intervals that cross midnight are split into per-day pieces.
 
-### 7.3 做累计求和
+### 7.3 Cumulative Sum
 
-同一天内，把所有 OpenCode + Codex turn window 按持续时间直接累计。
+For each day, sum all OpenCode and Codex turn durations directly.
 
-也就是说：
+This means parallel agents are counted cumulatively. The metric represents total AI labor, not wall-clock coverage.
 
-- 多个 agent 并行时，时间会重复累计
-- 这个指标表示 AI 总劳动量，不表示时间轴覆盖长度
+Outputs:
 
-结果：
+- daily active seconds
+- daily active hours
 
-- 每日总活跃秒数
-- 每日总活跃小时数
+## 8. Output Requirements
 
-## 8. 输出要求
+Add `AI Hours` to the existing daily token table and the total row.
 
-### 8.1 stdout
+Update the desktop PNG to use two vertically stacked subplots:
 
-在现有每日 token 表格中新增：
+- top: existing token stacked bar chart
+- bottom: daily AI active time in hours
 
-- `AI Hours`
+The bottom chart uses one bar per day in V1.
 
-在总计行新增：
+## 9. Success Criteria
 
-- 总 AI Hours
+- `python auto_usage.py -d 7` reliably prints AI Hours.
+- `token_usage_dashboard.png` includes the second subplot.
+- OpenCode and Codex turn windows cover recent real local data.
+- Parallel agent durations on the same day are cumulatively counted.
 
-### 8.2 PNG
+## 10. Risks And Limits
 
-改成上下两张共享 x 轴的 subplot：
+- This is an active window estimate, not strict work time.
+- Long idle gaps inside a turn can still overcount.
+- Parallel agents are counted cumulatively, so the result is closer to total labor than wall-clock coverage.
+- Codex turns without `task_complete` require a fallback.
+- OpenCode sessions with user messages but no assistant messages are skipped.
 
-- 上图：现有 token stacked bar
-- 下图：每日 AI 活跃时间（小时）
-
-下图第一版使用单柱，表示当日累计 AI 活跃小时数。
-
-## 9. 成功标准
-
-- `python auto_usage.py -d 7` 可以稳定输出 AI Hours
-- `token_usage_dashboard.png` 新增第二张子图
-- OpenCode + Codex 的 turn window 可以覆盖最近真实数据
-- 同一天多 agent 并行时长会重复累计
-
-## 10. 风险与限制
-
-- 这是活跃时间窗估算，不是严格工作时间
-- 若同一轮中间存在长时间 idle，仍可能轻微高估
-- 多个 agent 并行时会重复累计，因此结果更接近总劳动量而不是 wall clock 覆盖时长
-- Codex 单轮若缺失 `task_complete`，需要回退策略
-- OpenCode 某些 session 若只有 user 无 assistant，需要跳过
-
-## 11. 版本策略
+## 11. Version Strategy
 
 ### V1
 
-- OpenCode + Codex
-- turn window
-- stdout + PNG
+- Turn-window estimation for OpenCode and Codex.
+- Daily table column.
+- Dashboard subplot.
+- Unit tests for interval logic.
 
-### V2 可选
+### Optional V2
 
-- 增加 idle gap 切分
-- 增加每日窗口数、最长窗口
-- 增加 source-level breakdown 报表
+- Idle gap splitting.
+- Daily window counts and longest window.
+- Source-level active time breakdown.

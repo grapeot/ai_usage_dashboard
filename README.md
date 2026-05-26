@@ -1,10 +1,10 @@
 # AI Usage Dashboard
 
-本项目是一个本地优先的 AI token usage dashboard。它可以从 Codex、Claude Code、OpenCode、Cursor、GLM/Z.ai 等数据源汇总 token 用量，按公开 API 价格估算成本，并生成控制台表格、桌面图表和可选的电子纸显示 JSON。
+AI Usage Dashboard is a local-first token usage dashboard for Codex, Claude Code, OpenCode, Cursor, and GLM/Z.ai. It aggregates local usage data, estimates API-equivalent cost from public pricing assumptions, and can produce a terminal table, a desktop chart, and an optional e-paper JSON payload.
 
-它不是云端监控服务，也不会上传你的 usage 数据。所有原始导出、图表、JSON payload 和本地日志都留在本机，并被 `.gitignore` 排除。
+It is not a cloud monitoring service and does not upload your usage data. Raw exports, generated charts, JSON payloads, and local logs stay on your machine and are excluded by `.gitignore`.
 
-## 安装
+## Installation
 
 ```bash
 git clone <this-repo> ai_usage_dashboard
@@ -14,76 +14,76 @@ uv venv .venv
 uv pip install --python .venv/bin/python -e '.[dev]'
 ```
 
-`.env` 只用于本地私有配置。首次设置时先确认你实际使用哪些数据源，只配置你有的那一层。
+`.env` is only for local private configuration. Start by enabling only the data sources you actually use.
 
-## 初始设置：按数据源分层启用
+## Data Source Setup
 
-这个工具不是要求你一次接入所有平台。它按本机已有数据源逐层启用：
+You do not need every platform connected on day one. The tool enables each source independently based on what exists on your machine:
 
-- **Codex**：如果你使用 Codex CLI，默认读取本机 Codex session；不需要 API key。
-- **Claude Code**：如果你使用 Claude Code，默认读取本机 Claude Code project JSONL；不需要 API key。
-- **OpenCode**：如果你使用 OpenCode，默认读取本机 OpenCode SQLite。若你还安装了 `opencode_skill` archive 查询层，可在 `.env` 里设置 `AI_USAGE_OPENCODE_SKILL_PATH`。
-- **Cursor**：如果你要统计 Cursor dashboard export，在 `.env` 里设置 `CURSOR_COOKIE`。这是浏览器 cookie，只放私有 `.env`。
-- **GLM/Z.ai**：如果你要统计 GLM/Z.ai usage API，在 `.env` 里设置 `GLM_BEARER_TOKEN`。这是 bearer token，只放私有 `.env`。
+- **Codex**: If you use Codex CLI, the tool reads local Codex sessions by default. No API key is required.
+- **Claude Code**: If you use Claude Code, the tool reads local Claude Code project JSONL logs by default. No API key is required.
+- **OpenCode**: If you use OpenCode, the tool reads the main local OpenCode SQLite database by default. If you also use `opencode_skill` for archive querying, set `AI_USAGE_OPENCODE_SKILL_PATH` in `.env`.
+- **Cursor**: To include Cursor dashboard exports, set `CURSOR_COOKIE` in `.env`. This browser cookie must stay private.
+- **GLM/Z.ai**: To include the GLM/Z.ai usage API, set `GLM_BEARER_TOKEN` in `.env`. This bearer token must stay private.
 
-最小可用配置可以是空 `.env`。这样仍可统计本机能自动发现的数据源；没有凭证的数据源会被跳过或读取已有本地缓存。
+A minimal `.env` can be empty. The tool will still use local sources it can discover automatically; sources without credentials are skipped or read from existing local caches.
 
-当前版本使用各工具的默认本机数据目录。需要非默认路径时，优先通过对应工具自己的配置或 `AI_USAGE_OPENCODE_SKILL_PATH` 这类明确支持的变量接入；不要把个人绝对路径写进公开文档。
+The current version uses each tool's default local data directory. If you need custom paths, prefer the source tool's own configuration or explicit variables such as `AI_USAGE_OPENCODE_SKILL_PATH`. Do not put personal absolute paths in public documentation.
 
-## 使用
+## Usage
 
 ```bash
-# 最近 7 天
+# Last 7 days
 .venv/bin/python auto_usage.py -d 7
 
-# 最近 30 天，只生成文本和 E1002 JSON，跳过桌面图
+# Last 30 days, text + E1002 JSON only, no desktop chart
 .venv/bin/python auto_usage.py -d 30 --skip-desktop-chart
 
-# 跳过成本估算
+# Skip cost estimation
 .venv/bin/python auto_usage.py -d 7 --no-cost
 ```
 
-输出包括：
+Outputs:
 
-- 控制台表格：每日各平台 token 数、AI Hours、Est. $
-- `token_usage_dashboard.png`：桌面版 matplotlib 图表
-- `token_usage_eink.json`：E1002 / 本地显示服务使用的结构化 JSON
+- Terminal table: daily token counts, AI Hours, and estimated cost.
+- `token_usage_dashboard.png`: desktop matplotlib chart.
+- `token_usage_eink.json`: structured JSON for the E1002 and local display service.
 
-这些输出都属于本地私有 artifact，默认不提交到 git。
+These files are local private artifacts and are ignored by default.
 
-## 本地显示服务
+## Local Display Service
 
-本地 FastAPI 服务可以给局域网中的电子纸设备返回最新 dashboard JSON。
+The FastAPI service can serve the latest dashboard JSON to local devices such as an e-paper display.
 
 ```bash
 scripts/ai-usage-service
 ```
 
-默认地址：
+Default endpoints:
 
 - `http://127.0.0.1:7995/health`
 - `http://127.0.0.1:7995/token_usage.json`
 - `http://127.0.0.1:7995/api/v1/display/update`
 
-如果需要让局域网设备访问，请通过私有配置或启动脚本指定实际 host。不要把固定内网 IP 写进公开文件。
+If a LAN device needs access, configure the host through private local config or your own launch script. Do not commit fixed private IP addresses.
 
-## 数据来源
+## Data Sources
 
 - Codex: `npx @ccusage/codex@latest --json`
-- Cursor: `cursor.com/api/dashboard/export-usage-events-csv`，需要私有 cookie
-- GLM/Z.ai: usage API，需要私有 bearer token
-- Claude Code: 本机 Claude Code JSONL session 日志
-- OpenCode: 本机 OpenCode SQLite 数据库；如需跨 archive 查询，可配置单独安装的 `opencode_skill`
+- Cursor: `cursor.com/api/dashboard/export-usage-events-csv`, with a private browser cookie
+- GLM/Z.ai: usage API, with a private bearer token
+- Claude Code: local Claude Code JSONL session logs
+- OpenCode: local OpenCode SQLite database; optional archive support can use a separate `opencode_skill` installation
 
-这些路径和凭证都属于用户本机环境。公开 repo 只描述数据契约，不包含真实数据。
+All paths and credentials are local environment details. The public repository documents contracts only; it does not include real data.
 
-## 电子纸 Reference Implementation
+## E-Paper Reference Implementation
 
-`eink/` 是可选硬件参考实现，不是主项目安装的必需步骤。绝大多数用户只需要命令行表格、桌面图和本地 JSON；可以完全忽略 `eink/`。
+`eink/` is optional hardware reference code, not part of the normal installation path. Most users only need the terminal table, desktop chart, and local JSON output.
 
-当前 reference implementation 针对 **Seeed Studio reTerminal E1002**（800x480 彩色 e-paper）。如果你刚好有这块硬件，可以参考 `eink/README.md` 和 `eink/e1002/README.md`。
+The current reference implementation targets the **Seeed Studio reTerminal E1002** 800x480 color e-paper display. If you have that device, see `eink/README.md` and `eink/e1002/README.md`.
 
-硬件配置使用 Arduino sketch 旁边的 `eink/e1002/secrets.h`。这个文件包含 Wi-Fi 和本地服务 URL，不提交。公开模板是 `eink/e1002/secrets.h.example`：
+Hardware configuration lives in `eink/e1002/secrets.h` next to the Arduino sketch. That file contains Wi-Fi and local service URLs and must not be committed. The public template is `eink/e1002/secrets.h.example`:
 
 ```cpp
 constexpr const char* kWifiSsid = "YOUR_WIFI_SSID";
@@ -94,19 +94,19 @@ constexpr const char* kWifiPassword = "YOUR_WIFI_PASSWORD";
 #define AI_USAGE_DASHBOARD_DEVICE_ID "example-e1002"
 ```
 
-普通初始化不需要创建 `secrets.h`。只有在你要编译/刷写 reTerminal E1002 sketch 时才需要复制这个 example。
+Normal setup does not require `secrets.h`. Create it only when compiling or flashing the reTerminal E1002 sketch.
 
-## 给 AI Agent
+## For AI Agents
 
-本项目的 root skill 在：
+The repo-local root skill is:
 
 ```text
 skills/skill_ai_usage_dashboard.md
 ```
 
-当用户要求统计 AI usage、估算 token 成本、刷新本地 dashboard 或调试 E1002 JSON contract 时，先读这个 skill，再执行对应命令。全局 workspace 可以只保留一个指向该文件的入口，不需要维护第二份 skill。
+When a user asks to inspect AI usage, estimate token cost, refresh the local dashboard, or debug the E1002 JSON contract, read this skill first. Workspace-level skill files can point to this file; the repo-local file is the source of truth.
 
-## 开发与验证
+## Development And Verification
 
 ```bash
 .venv/bin/python -m pytest tests/ -v
@@ -114,9 +114,9 @@ skills/skill_ai_usage_dashboard.md
 git check-ignore .env token_usage_eink.json token_usage_dashboard.png usage.json cursor.csv glm.json update.log tmp/example.txt
 ```
 
-发布前还需要做一轮隐私扫描，覆盖固定内网 IP、个人绝对路径、私有部署域名、旧 workspace 路径和 secret-manager 引用。
+Before publishing, also run a privacy scan for fixed private IPs, personal absolute paths, private deployment domains, old workspace paths, and secret-manager references.
 
-更完整的测试策略见 `docs/test.md`。
+See `docs/test.md` for the fuller test strategy.
 
 ## Privacy
 

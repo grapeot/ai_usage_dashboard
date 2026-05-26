@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
-自动导出并汇总 Codex、Cursor、GLM、OpenCode 的 token 使用数据
-支持按官方 API 价估算美元成本（见 docs/PRICING_ESTIMATE_DESIGN.md）
+Export and aggregate token usage from Codex, Cursor, GLM, and OpenCode.
+Supports API-equivalent USD cost estimation. See docs/rfc.md.
 """
 import json
 import csv
@@ -25,12 +25,12 @@ from pricing_config import get_pricing, calc_cost
 
 plt.rcParams['axes.unicode_minus'] = False
 
-# GLM 无 input/output 拆分时的假设比例
+# Assumed GLM input/output split when the API only returns total tokens.
 GLM_INPUT_RATIO = 0.7
 GLM_OUTPUT_RATIO = 0.3
 
-# 中英文分字体：中文用 STHeiti（系统常见），英文用 Helvetica Neue
-# 若 STHeiti 不可用，回退到 rcParams 全局中文字体
+# Separate fonts keep desktop charts readable across platforms.
+# Fall back to matplotlib defaults if the preferred fonts are unavailable.
 FONT_ZH = FontProperties(family=['STHeiti', 'Heiti TC', 'PingFang HK', 'Kaiti SC', 'Songti SC', 'Arial Unicode MS'])
 FONT_EN = FontProperties(family=['Helvetica Neue', 'Helvetica', 'Arial', 'DejaVu Sans'])
 
@@ -255,11 +255,11 @@ def write_eink_dashboard_payload(
     return payload
 
 def parse_args():
-    parser = argparse.ArgumentParser(description='汇总各平台 token 使用数据')
-    parser.add_argument('-d', '--days', type=int, default=30, help='统计最近 N 天 (默认 30)')
-    parser.add_argument('-s', '--since', type=str, help='起始日期 (YYYYMMDD 或 YYYY-MM-DD)')
-    parser.add_argument('--no-cost', action='store_true', help='不估算美元成本')
-    parser.add_argument('--skip-desktop-chart', action='store_true', help='跳过桌面 PNG 图表生成，仅输出文本和 JSON')
+    parser = argparse.ArgumentParser(description='Aggregate token usage across AI coding tools')
+    parser.add_argument('-d', '--days', type=int, default=30, help='Analyze the last N days (default: 30)')
+    parser.add_argument('-s', '--since', type=str, help='Start date (YYYYMMDD or YYYY-MM-DD)')
+    parser.add_argument('--no-cost', action='store_true', help='Skip USD cost estimation')
+    parser.add_argument('--skip-desktop-chart', action='store_true', help='Skip the desktop PNG chart; output text and JSON only')
     return parser.parse_args()
 
 def export_codex(start_date):
@@ -276,8 +276,8 @@ def export_codex(start_date):
 
     raw = result.stdout.strip()
     if not raw:
-        print("cc-usage 未输出 JSON（stdout 为空）。可能原因：", file=sys.stderr)
-        print("  - 首次运行 npx 时需安装包，可先手动执行: npx @ccusage/codex@latest --json -s 20260302", file=sys.stderr)
+        print("cc-usage returned no JSON because stdout was empty. Possible causes:", file=sys.stderr)
+        print("  - First npx run may need package installation. Try: npx @ccusage/codex@latest --json -s 20260302", file=sys.stderr)
         if result.stderr:
             print(f"stderr: {result.stderr[:500]}", file=sys.stderr)
         return None
@@ -285,8 +285,8 @@ def export_codex(start_date):
     try:
         data = json.loads(raw)
     except json.JSONDecodeError as e:
-        print(f"cc-usage 输出非 JSON: {e}", file=sys.stderr)
-        print(f"stdout 前 500 字符: {raw[:500]!r}", file=sys.stderr)
+        print(f"cc-usage returned non-JSON output: {e}", file=sys.stderr)
+        print(f"First 500 stdout characters: {raw[:500]!r}", file=sys.stderr)
         return None
     with open(os.path.join(SCRIPT_DIR, 'usage.json'), 'w') as f:
         json.dump(data, f, indent=2)
@@ -1013,9 +1013,9 @@ def generate_dashboard_desktop(cursor, glm, claude, gpt_opencode, deepseek, othe
         ax.bar(date_nums, vals[label], width, bottom=bottom, label=label, color=color)
         bottom = [b + v for b, v in zip(bottom, vals[label])]
     
-    ax.set_ylabel('Tokens (亿)', fontproperties=FONT_ZH)
+    ax.set_ylabel('Tokens (100M)', fontproperties=FONT_EN)
     total_yi = grand_total / 1e8
-    title = f'{start_date} ~ {end_date} - 总计 {total_yi:.2f} 亿 tokens'
+    title = f'{start_date} ~ {end_date} - Total {total_yi:.2f} x 100M tokens'
     if has_costs:
         title += f' | Est. ${cost_total:.2f}'
     ax.set_title(title, fontproperties=FONT_ZH)
@@ -1024,7 +1024,7 @@ def generate_dashboard_desktop(cursor, glm, claude, gpt_opencode, deepseek, othe
     active_hour_vals = [(daily_active_seconds or {}).get(d.date(), 0.0) / 3600 for d in dates]
     ax_active.bar(date_nums, active_hour_vals, width=0.8, color=PALETTE['GPT'])
     ax_active.set_ylabel('Hours', fontproperties=FONT_EN)
-    active_title = f'AI Active Time (cumulative est.) - 总计 {active_hours_total:.2f} 小时'
+    active_title = f'AI Active Time (cumulative est.) - Total {active_hours_total:.2f} hours'
     ax_active.set_title(active_title, fontproperties=FONT_ZH)
     
     ax_active.xaxis.set_major_formatter(mdates.DateFormatter('%m/%d'))

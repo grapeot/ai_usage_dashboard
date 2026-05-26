@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-单独导出并计算 Codex token 使用数据（使用自定义定价）
+Export and calculate Codex token usage with custom pricing.
 """
 import argparse
 import json
