@@ -1,211 +1,202 @@
-# RFC：`auto_usage.py` 中的 AI 活跃时间估算实现
+# RFC: AI Active Time Estimation In `auto_usage.py`
 
-## 1. 概述
+## 1. Overview
 
-本文档定义如何在 `auto_usage.py` 中实现 AI 活跃时间累计估算，并与现有 token / cost 输出并列展示。
+This document defines how `auto_usage.py` estimates cumulative AI active time and displays it alongside existing token and cost output.
 
-实现目标：
+Implementation goals:
 
-- 不改变现有 token / cost 语义
-- 新增 OpenCode + Codex 的 turn-window cumulative active time
-- 在 stdout 和 PNG 中一起展示
+- Preserve existing token and cost semantics.
+- Add OpenCode + Codex turn-window cumulative active time.
+- Display the result in stdout and the desktop PNG.
 
-## 2. 数据模型
-
-### 2.1 Interval
+## 2. Data Model
 
 ```python
-(start: datetime, end: datetime)
+TimeInterval = tuple[datetime, datetime]
+DailyActiveSeconds = dict[date, float]
 ```
 
-约束：
+Constraints:
 
-- `end >= start`
-- 零长度区间允许保留，但聚合时贡献为 0
+- Timestamps are normalized into local naive `datetime` objects.
+- Intervals use inclusive start and exclusive end semantics in practice.
+- Zero-length intervals can exist but contribute zero seconds.
 
-说明：
+Notes:
 
-- 第一版实现里 interval 不携带 `source`
-- source 级信息在 turn 构造阶段使用，进入每日 union 前统一退化为时间区间 tuple
+- V1 intervals do not carry source metadata.
+- Source-level logic is used while constructing turns, then normalized into plain time intervals before daily aggregation.
 
-### 2.2 Daily Active Seconds
+## 3. OpenCode Algorithm
 
-```python
-dict[date, float]
-```
+### 3.1 Read Scope
 
-值为当天 merge 后的总秒数。
-
-## 3. OpenCode 算法
-
-### 3.1 读取范围
-
-读取 `message` 表，字段：
+Read the `message` table fields:
 
 - `session_id`
 - `time_created`
 - `data`
 
-只保留：
+Keep only:
 
-- `role in ('user', 'assistant')`
+- `role == user`
+- `role == assistant`
 
-对于 assistant：
+For assistant messages, skip GLM providers.
 
-- 若 `providerID` 属于 `GLM_PROVIDERS`，跳过
+### 3.2 Turn Construction
 
-### 3.2 turn 构造
+For each `session_id`:
 
-对每个 `session_id`：
+1. Sort by `time_created` ascending.
+2. Maintain `pending_user_start` and `last_assistant_time`.
+3. On `user`:
+   - If the pending turn has assistant output, close the previous turn.
+   - Start a new turn.
+4. On `assistant`:
+   - If a pending turn exists, set `last_assistant_time` to the assistant timestamp.
+5. At session end:
+   - If the pending turn has assistant output, emit `[pending_user_start, last_assistant_time]`.
 
-1. 按 `time_created` 升序排序
-2. 维护 `pending_user_start` 和 `last_assistant_time`
-3. 遇到 `user`：
-   - 如果当前 pending turn 已经有 assistant 输出，则先收口上一轮
-   - 开启新 turn，`pending_user_start = user_time`
-   - `last_assistant_time = None`
-4. 遇到 `assistant`：
-   - 若当前存在 `pending_user_start`，更新 `last_assistant_time = assistant_time`
-5. session 结束：
-   - 如果 pending turn 有 assistant 输出，则输出 `[pending_user_start, last_assistant_time]`
+### 3.3 Boundaries
 
-### 3.3 边界处理
+- Multiple assistant messages belong to the same turn; the last assistant timestamp ends the turn.
+- Consecutive user messages drop the previous pending turn if it has no assistant output; otherwise they close it first.
+- Assistant messages without a user message are ignored.
 
-- 连续多个 assistant：都属于同一轮，结束时间取最后一个 assistant
-- 连续多个 user：前一轮如果没有 assistant，直接丢弃；否则先收口
-- 没有 user 的 assistant：忽略
+## 4. Codex Algorithm
 
-## 4. Codex 算法
+### 4.1 Event Selection
 
-### 4.1 事件选择
+Read all events from each `.jsonl` file.
 
-从 `.jsonl` 中读取所有事件。
-
-关心两类 `event_msg.payload.type`：
+Relevant `event_msg.payload.type` values:
 
 - `user_message`
 - `task_complete`
 
-以及必要时使用文件最后一条事件顶层 `timestamp` 做回退。
+Use the top-level timestamp of the final event as a fallback when needed.
 
-### 4.2 turn 构造
+### 4.2 Turn Construction
 
-1. 维护 `pending_user_start`
-2. 遇到 `user_message`：
-   - 如果已有未关闭 turn，则用当前事件时间或上一事件时间回退关闭旧 turn
-   - 开启新 turn
-3. 遇到 `task_complete`：
-   - 若存在 pending turn，则输出 `[pending_user_start, task_complete_time]`，并关闭
-4. 文件结束：
-   - 若仍存在 pending turn，则用最后事件时间关闭
+1. Maintain `pending_user_start`.
+2. On `user_message`:
+   - If a previous turn is still open, close it at the current event timestamp.
+   - Start a new turn.
+3. On `task_complete`:
+   - If a pending turn exists, emit `[pending_user_start, task_complete_time]` and close it.
+4. At file end:
+   - If a pending turn remains, close it at the final event timestamp.
 
-### 4.3 为什么不用 `response_item` assistant message
+### 4.3 Why Not `response_item`
 
-Codex 的事件流里可见消息、reasoning、tool call、task lifecycle 混在一起。
+Codex event streams mix visible messages, reasoning, tool calls, and task lifecycle events. V1 uses `user_message -> task_complete` because that more closely represents an agent execution lifecycle than a visible text response.
 
-第一版用 `user_message -> task_complete` 更稳，因为它更接近一次 agent 执行生命周期，而不是某条可见文本输出。
+## 5. Daily Aggregation
 
-## 5. 每日聚合
+### 5.1 Split By Day
 
-### 5.1 切天
+Any cross-day interval is split into pieces:
 
-任何跨天区间都切成多段：
+```python
+[(date1, (start, midnight)), (date2, (midnight, end))]
+```
 
-- `[start, midnight)`
-- `[midnight, next_midnight)`
-- ...
+### 5.2 Sum
 
-### 5.2 累计
+For each day:
 
-同一天内：
+1. Split all intervals by day.
+2. Add each piece duration directly.
+3. Do not collapse overlapping windows.
 
-1. 把所有区间按天切分
-2. 对每个分片直接累加 `(end - start)`
-3. 不做 overlap collapse
+### 5.3 Output
 
-### 5.3 输出
+The result is:
 
-得到：
+```python
+{date: seconds}
+```
 
-- `daily_active_seconds`
-- `daily_active_hours = seconds / 3600`
+The metric represents cumulative AI labor. Overlapping parallel agents are intentionally counted more than once.
 
-说明：
+## 6. Code Changes
 
-- 该指标表示累计劳动量
-- 并行 agent 的重叠时间会重复累计
+### 6.1 New Functions In `auto_usage.py`
 
-## 6. 代码改动建议
-
-### 6.1 `auto_usage.py` 新增函数
-
-- `load_opencode_turn_intervals(exclude_glm=True)`
+- `split_interval_by_day()`
+- `build_opencode_turn_intervals()`
+- `load_opencode_turn_intervals()`
+- `build_codex_turn_intervals()`
 - `load_codex_turn_intervals()`
-- `split_interval_by_day(start, end)`
-- `merge_intervals(intervals)`
-- `compute_daily_ai_active_seconds(opencode_intervals, codex_intervals, start_date, end_date)`
+- `compute_daily_ai_active_seconds()`
 
-### 6.2 `generate_dashboard()` 扩展
+### 6.2 `generate_dashboard()` Extension
 
-新增参数：
+New parameter:
 
-- `daily_active_seconds=None`
+```python
+daily_active_seconds: dict[date, float] | None
+```
 
-新增行为：
+New behavior:
 
-- stdout 增加 `AI Hours`
-- 图像改成 `2 x 1` subplot
+- stdout includes `AI Hours`
+- desktop PNG uses a `2 x 1` subplot layout
 
-## 7. UI/输出设计
+## 7. Output Design
 
-### 7.1 表格列
+### 7.1 Table Column
 
-在 `Total` 后、`Est. $` 前插入：
+Insert after `Total` and before `Est. $`:
 
-- `AI Hours`
+```text
+AI Hours
+```
 
-理由：它是另一个核心结果，重要性高于 cost，但低于 token 总量。
+It is a core output, less primary than total tokens but more actionable than cost for workflow analysis.
 
-### 7.2 图像布局
+### 7.2 Image Layout
 
-上图：
+Top chart:
 
-- 保持现有 token stacked bar
+- existing token stacked bar
 
-下图：
+Bottom chart:
 
-- 每日 AI Hours 单柱图（累计值）
-- y 轴：`Hours`
-- 标题：`AI Active Time (cumulative est.)`
+- one bar per day for AI Hours
+- y-axis: `Hours`
+- title: `AI Active Time (cumulative est.)`
 
-## 8. 测试策略
+## 8. Test Strategy
 
-新增单元测试覆盖：
+Add unit tests for:
 
-- interval merge
-- 按天切分
-- OpenCode turn 构造
-- Codex turn 构造
+- day splitting
+- OpenCode turn construction
+- Codex turn construction
+- cross-source cumulative aggregation
 
-优先采用小样本构造数据，不依赖真实本机数据库。
+Use small synthetic samples instead of real local databases.
 
-## 9. 向后兼容
+## 9. Compatibility
 
-- 不删除现有 token 列
-- 不改变 cost 估算逻辑
-- Cursor / GLM 仍保留在 token 统计中，只是不进入 AI 活跃时间统计
+- Do not remove existing token columns.
+- Do not change cost estimation logic.
+- Cursor and GLM stay in token statistics but do not contribute to AI active time.
 
-## 10. 文档改动
+## 10. Documentation Changes
 
-- 新增 `docs/prd.md`
-- 新增 `docs/rfc.md`
-- 更新 `README.md`
-- 更新 `docs/WORKING.md`
-- 删除 `docs/PRICING_ESTIMATE_DESIGN.md`
+- Add `docs/prd.md`.
+- Add `docs/rfc.md`.
+- Update `README.md`.
+- Update `docs/WORKING.md`.
+- Remove the old pricing-estimate design note.
 
-## 11. 待确认但不阻塞实现的点
+## 11. Open Questions
 
-- OpenCode 是否需要后续引入 idle-gap 二次切分
-- Codex 是否需要以后支持更细的 assistant 可见输出结束判定
+- Whether OpenCode should later add idle-gap splitting.
+- Whether Codex should later use a more precise visible-output end signal.
 
-第一版先追求稳定、可解释、可回归验证。
+V1 prioritizes stability, explainability, and regression coverage.
