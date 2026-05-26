@@ -21,8 +21,11 @@ from auto_usage import (
     generate_dashboard,
     load_claude_code,
     load_claude_code_detailed,
+    load_codex,
+    load_cursor,
     load_glm,
     load_opencode,
+    load_opencode_from_db,
     load_opencode_turn_intervals,
     merge_daily_tokens,
     merge_intervals,
@@ -274,6 +277,14 @@ def test_build_eink_dashboard_payload_emits_minimal_device_friendly_shape():
     }
 
 
+def test_load_codex_returns_empty_when_export_missing(tmp_path):
+    assert load_codex(tmp_path / 'missing-usage.json') == {}
+
+
+def test_load_cursor_returns_empty_when_export_missing(tmp_path):
+    assert load_cursor(tmp_path / 'missing-cursor.csv') == {}
+
+
 def test_load_glm_accepts_date_only_and_minute_precision_timestamps(tmp_path):
     glm_path = tmp_path / 'glm.json'
     glm_path.write_text(json.dumps({
@@ -479,6 +490,51 @@ def test_load_opencode_honors_env_opencode_skill_path(monkeypatch, tmp_path):
     )
 
     assert daily['gpt_opencode'] == {date(2026, 3, 20): 15}
+
+
+def test_load_opencode_falls_back_to_local_db_when_skill_missing(monkeypatch, tmp_path):
+    db_path = tmp_path / 'opencode.db'
+    conn = sqlite3.connect(db_path)
+    conn.execute('CREATE TABLE message (session_id TEXT, time_created INTEGER, data TEXT)')
+    in_range_ts = date_to_epoch_ms(date(2026, 3, 20)) + 12 * 60 * 60 * 1000
+    conn.execute(
+        'INSERT INTO message (session_id, time_created, data) VALUES (?, ?, ?)',
+        (
+            'ses-1',
+            in_range_ts,
+            json.dumps({
+                'role': 'assistant',
+                'providerID': 'openai',
+                'modelID': 'gpt-5.4',
+                'tokens': {'input': 1, 'output': 2, 'reasoning': 3, 'cache': {'read': 4, 'write': 5}},
+                'time': {'created': in_range_ts},
+            }),
+        ),
+    )
+    conn.commit()
+    conn.close()
+
+    monkeypatch.setattr('auto_usage.OPENCODE_DB', db_path)
+    monkeypatch.delitem(sys.modules, 'opencode_skill', raising=False)
+    monkeypatch.delitem(sys.modules, 'opencode_skill.query', raising=False)
+    monkeypatch.setenv('AI_USAGE_OPENCODE_SKILL_PATH', str(tmp_path / 'missing-skill'))
+
+    daily = load_opencode(
+        start_ts=date_to_epoch_ms(date(2026, 3, 20)),
+        end_ts=date_to_epoch_ms(date(2026, 3, 21)),
+    )
+
+    assert daily['gpt_opencode'] == {date(2026, 3, 20): 15}
+
+
+def test_load_opencode_from_db_returns_empty_when_db_missing(monkeypatch, tmp_path):
+    monkeypatch.setattr('auto_usage.OPENCODE_DB', tmp_path / 'missing.db')
+    assert load_opencode_from_db() == {
+        'anthropic': {},
+        'gpt_opencode': {},
+        'deepseek': {},
+        'opencode_other': {},
+    }
 
 
 def test_load_opencode_turn_intervals_filters_by_time_range(monkeypatch, tmp_path):

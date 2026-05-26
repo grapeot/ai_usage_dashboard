@@ -363,6 +363,8 @@ def export_glm(bearer_token, start_date, end_date):
 def load_codex(path=None):
     if path is None:
         path = os.path.join(SCRIPT_DIR, 'usage.json')
+    if not os.path.exists(path):
+        return {}
     with open(path) as f:
         data = json.load(f)
     daily = {}
@@ -374,6 +376,8 @@ def load_codex(path=None):
 def load_cursor(path=None):
     if path is None:
         path = os.path.join(SCRIPT_DIR, 'cursor.csv')
+    if not os.path.exists(path):
+        return {}
     daily = defaultdict(int)
     with open(path) as f:
         reader = csv.DictReader(f)
@@ -544,29 +548,79 @@ def load_claude_code_detailed(project_dirs: list[Path] | None = None, start_date
         daily_models[dt][model_id]['cache_write_1h'] += cache_write_1h
     return dict(daily_models)
 
+def empty_opencode_totals() -> dict[str, DailyTokens]:
+    return {
+        'anthropic': {},
+        'gpt_opencode': {},
+        'deepseek': {},
+        'opencode_other': {},
+    }
+
+
+def load_opencode_from_db(exclude_glm: bool = True, start_ts: int | None = None, end_ts: int | None = None) -> dict[str, DailyTokens]:
+    totals = {
+        'anthropic': defaultdict(int),
+        'gpt_opencode': defaultdict(int),
+        'deepseek': defaultdict(int),
+        'opencode_other': defaultdict(int),
+    }
+    if not OPENCODE_DB.exists():
+        return empty_opencode_totals()
+
+    try:
+        conn = sqlite3.connect(f'file:{OPENCODE_DB}?mode=ro', uri=True)
+        cur = conn.cursor()
+        query = "SELECT time_created, data FROM message WHERE json_extract(data, '$.role') = 'assistant'"
+        params: list[int] = []
+        if start_ts is not None:
+            query += ' AND time_created >= ?'
+            params.append(start_ts)
+        if end_ts is not None:
+            query += ' AND time_created < ?'
+            params.append(end_ts)
+        cur.execute(query, params)
+        for time_created, data_str in cur:
+            try:
+                msg = json.loads(data_str)
+            except json.JSONDecodeError:
+                continue
+            bucket = classify_opencode_bucket(msg.get('providerID', ''), msg.get('modelID', ''), exclude_glm=exclude_glm)
+            if bucket is None:
+                continue
+            tokens = msg.get('tokens', {})
+            total = int(tokens.get('input', 0) or 0) + int(tokens.get('output', 0) or 0)
+            cache = tokens.get('cache', {})
+            if isinstance(cache, dict):
+                total += int(cache.get('read', 0) or 0) + int(cache.get('write', 0) or 0)
+            total += int(tokens.get('reasoning', 0) or 0)
+            if total <= 0:
+                continue
+            created_ts = msg.get('time', {}).get('created') or time_created
+            if not created_ts:
+                continue
+            totals[bucket][datetime.fromtimestamp(created_ts / 1000).date()] += total
+        conn.close()
+    except (sqlite3.Error, TypeError, ValueError):
+        return empty_opencode_totals()
+
+    return {key: dict(value) for key, value in totals.items()}
+
+
 def load_opencode(exclude_glm: bool = True, start_ts: int | None = None, end_ts: int | None = None):
-    """Load OpenCode token usage via opencode_skill.query.
-
-    The query layer transparently UNION's main DB + archive DBs, so totals stay
-    complete after archive surgery. Batch jobs are real money — they must count.
-    """
-    anthropic = defaultdict(int)
-    gpt_opencode = defaultdict(int)
-    opencode_deepseek = defaultdict(int)
-    opencode_other = defaultdict(int)
-
+    """Load OpenCode token usage, using opencode_skill archive support when available."""
     configure_opencode_skill_path()
     try:
         ocs_query = importlib.import_module('opencode_skill.query')
     except ImportError as e:
-        print(f"opencode_skill not importable: {e}. Install via PYTHONPATH or pip install -e.", file=sys.stderr)
-        return {
-            'anthropic': dict(anthropic),
-            'gpt_opencode': dict(gpt_opencode),
-            'deepseek': dict(opencode_deepseek),
-            'opencode_other': dict(opencode_other),
-        }
+        print(f"opencode_skill not importable: {e}. Falling back to the main local OpenCode DB.", file=sys.stderr)
+        return load_opencode_from_db(exclude_glm=exclude_glm, start_ts=start_ts, end_ts=end_ts)
 
+    totals = {
+        'anthropic': defaultdict(int),
+        'gpt_opencode': defaultdict(int),
+        'deepseek': defaultdict(int),
+        'opencode_other': defaultdict(int),
+    }
     for m in ocs_query.iter_assistant_messages(since_ms=start_ts, until_ms=end_ts):
         bucket = classify_opencode_bucket(m.provider or '', m.model or '', exclude_glm=exclude_glm)
         if bucket is None:
@@ -574,22 +628,9 @@ def load_opencode(exclude_glm: bool = True, start_ts: int | None = None, end_ts:
         total = m.tokens_input + m.tokens_output + m.tokens_reasoning + m.tokens_cache_read + m.tokens_cache_write
         if total <= 0:
             continue
-        dt = datetime.fromtimestamp(m.time_created / 1000).date()
-        if bucket == 'anthropic':
-            anthropic[dt] += total
-        elif bucket == 'gpt_opencode':
-            gpt_opencode[dt] += total
-        elif bucket == 'deepseek':
-            opencode_deepseek[dt] += total
-        else:
-            opencode_other[dt] += total
+        totals[bucket][datetime.fromtimestamp(m.time_created / 1000).date()] += total
 
-    return {
-        'anthropic': dict(anthropic),
-        'gpt_opencode': dict(gpt_opencode),
-        'deepseek': dict(opencode_deepseek),
-        'opencode_other': dict(opencode_other),
-    }
+    return {key: dict(value) for key, value in totals.items()}
 
 
 def load_opencode_detailed(exclude_glm: bool = True, start_ts: int | None = None, end_ts: int | None = None):
