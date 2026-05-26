@@ -1,0 +1,41 @@
+[project]
+name = "ai-usage-dashboard"
+version = "0.1.0"
+description = "Local AI token usage aggregation, cost estimation, and e-ink dashboard output"
+requires-python = ">=3.11"
+dependencies = [
+    "fastapi>=0.110,<1",
+    "httpx>=0.27,<1",
+    "matplotlib>=3.8,<4",
+    "requests>=2.31,<3",
+    "uvicorn>=0.29,<1",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.3,<9",
+]
+eink = [
+    "bleak>=0.22,<1",
+]
+
+[tool.pytest.ini_options]
+markers = [
+    "live_api: tests that call real provider APIs or require real local credentials",
+    "hardware: tests or checks that require physical e-ink hardware or Arduino tooling",
+]
+
+[tool.setuptools]
+py-modules = [
+    "auto_usage",
+    "codex_usage",
+    "display_contract",
+    "firmware_logic",
+    "local_display_service",
+    "opencode_token_analyzer",
+    "pricing_config",
+]
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"

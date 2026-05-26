@@ -1,0 +1,7 @@
+matplotlib
+requests
+pytest
+bleak
+fastapi
+uvicorn
+httpx
