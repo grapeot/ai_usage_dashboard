@@ -1,0 +1,117 @@
+# AI Usage Dashboard Skill
+
+## When To Use
+
+Use this skill when the user asks to summarize local AI usage, estimate API-equivalent cost, inspect recent OpenCode or Claude Code token usage, generate an AI usage chart, or refresh the optional local e-ink dashboard JSON.
+
+This skill is local-first. It reads data from the user's machine and writes local artifacts. It does not upload usage data anywhere.
+
+## Prerequisites
+
+- Working directory: the `ai_usage_dashboard` repo root.
+- Python environment: `.venv/` created with `uv`.
+- Optional private config: `.env`, copied from `.env.example`.
+- Codex and Claude Code: no key required when their default local logs exist.
+- OpenCode: local DB support by default; optional archive support can point `AI_USAGE_OPENCODE_SKILL_PATH` to an `opencode_skill` checkout.
+- Cursor: optional `CURSOR_COOKIE` in `.env`.
+- GLM/Z.ai: optional `GLM_BEARER_TOKEN` in `.env`.
+
+Never print `.env`, cookies, bearer tokens, generated usage exports, or local dashboard JSON unless the user explicitly asks for a sanitized excerpt.
+
+## Commands
+
+All commands run from the repo root.
+
+```bash
+.venv/bin/python auto_usage.py -d 7
+.venv/bin/python auto_usage.py -d 30 --skip-desktop-chart
+.venv/bin/python auto_usage.py -d 7 --no-cost
+.venv/bin/python opencode_token_analyzer.py --provider anthropic --hours 5
+.venv/bin/python -m uvicorn local_display_service:app --host 127.0.0.1 --port 7995
+```
+
+Convenience wrappers:
+
+```bash
+scripts/ai-usage -d 7
+scripts/ai-usage-service
+scripts/update-local-artifacts
+```
+
+## Output Contract
+
+`auto_usage.py` prints a daily table with these public categories:
+
+- Cursor
+- GLM
+- Claude
+- GPT
+- DeepSeek
+- Other
+- Total
+- AI Hours
+- Est. $, unless `--no-cost` is used
+
+It may write local artifacts:
+
+- `token_usage_dashboard.png`: desktop chart, local/private generated output.
+- `token_usage_eink.json`: E1002 display payload, local/private generated output.
+- `usage.json`, `cursor.csv`, `glm.json`: raw provider exports, local/private generated output.
+
+These files are intentionally gitignored.
+
+## Local Display Service
+
+The FastAPI service exposes:
+
+```text
+GET  /health
+GET  /token_usage.json
+POST /api/v1/display/update
+```
+
+`POST /api/v1/display/update` accepts:
+
+```json
+{
+  "reason": "force_button",
+  "view": "7d",
+  "device_id": "example-device"
+}
+```
+
+It returns the same dashboard JSON shape used by `token_usage_eink.json`: `meta`, `summary`, and `daily`.
+
+## E-Ink Reference Implementation
+
+`eink/` is optional. It is a reference implementation for Seeed Studio reTerminal E1002, not part of normal setup. Most users can ignore it.
+
+Only create `eink/e1002/secrets.h` when compiling or flashing that hardware sketch. The public `secrets.h.example` shows the required placeholders; real Wi-Fi credentials, local service URLs, and device IDs stay in the ignored private file.
+
+## Privacy Rules
+
+- Treat all generated usage files as private.
+- Keep real provider credentials only in `.env`.
+- Keep Wi-Fi credentials and E1002 service URLs only in `eink/e1002/secrets.h`; ordinary users do not need this file.
+- Public docs must use fake hosts such as `YOUR_LOCAL_HOST` and fake tokens such as `replace-with-your-real-token`.
+- Do not add personal absolute paths, private hostnames, fixed LAN IPs, or real usage screenshots to public files.
+
+## Validation
+
+Use these checks after changes:
+
+```bash
+.venv/bin/python -m pytest tests/ -v
+.venv/bin/python -c "import tomllib; tomllib.load(open('pyproject.toml','rb'))"
+git check-ignore .env token_usage_eink.json token_usage_dashboard.png usage.json cursor.csv glm.json update.log tmp/example.txt
+```
+
+Also run a privacy scan for fixed LAN IPs, personal absolute paths, private deployment hostnames, old workspace paths, and secret-manager references.
+
+If firmware changed and Arduino tooling is available, compile `eink/e1002/e1002.ino` with the ESP32-S3 settings documented in `docs/test.md`.
+
+## Known Caveats
+
+- Cursor and GLM exports require private credentials and should be treated as optional.
+- OpenCode archive support depends on a separate `opencode_skill` installation or path.
+- The e-ink firmware is a companion project; Python tests mirror only its pure logic, not hardware behavior.
