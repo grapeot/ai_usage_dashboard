@@ -110,6 +110,10 @@ def load_env():
 
 def configure_opencode_skill_path():
     path = os.environ.get('AI_USAGE_OPENCODE_SKILL_PATH', '').strip()
+    if not path:
+        sibling_path = Path(SCRIPT_DIR).parent / 'opencode_skill' / 'src'
+        if sibling_path.exists():
+            path = str(sibling_path)
     if path and path not in sys.path:
         sys.path.insert(0, path)
 
@@ -264,7 +268,7 @@ def parse_args():
 
 def export_codex(start_date):
     result = subprocess.run(
-        ['npx', '-y', '@ccusage/codex@latest', '--json', '-s', start_date.replace('-', '')],
+        ['npx', '-y', 'ccusage', 'codex', 'daily', '--json', '-s', start_date.replace('-', '')],
         capture_output=True,
         text=True,
         cwd=SCRIPT_DIR,
@@ -277,7 +281,7 @@ def export_codex(start_date):
     raw = result.stdout.strip()
     if not raw:
         print("cc-usage returned no JSON because stdout was empty. Possible causes:", file=sys.stderr)
-        print("  - First npx run may need package installation. Try: npx @ccusage/codex@latest --json -s 20260302", file=sys.stderr)
+        print("  - First npx run may need package installation. Try: npx ccusage codex daily --json -s 20260302", file=sys.stderr)
         if result.stderr:
             print(f"stderr: {result.stderr[:500]}", file=sys.stderr)
         return None
@@ -292,18 +296,100 @@ def export_codex(start_date):
         json.dump(data, f, indent=2)
     return data
 
+
+def parse_ccusage_daily_date(value: str) -> date:
+    try:
+        return datetime.strptime(value, '%b %d, %Y').date()
+    except ValueError:
+        return datetime.strptime(value, '%Y-%m-%d').date()
+
 def export_cursor(cookie_str, start_ts, end_ts):
-    url = f'https://cursor.com/api/dashboard/export-usage-events-csv?startDate={start_ts}&endDate={end_ts}'
+    url = 'https://cursor.com/api/dashboard/get-filtered-usage-events'
     headers = {
-        'User-Agent': 'Mozilla/5.0',
+        'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:151.0) Gecko/20100101 Firefox/151.0',
+        'Accept': '*/*',
+        'Referer': 'https://cursor.com/dashboard/usage',
+        'Content-Type': 'application/json',
+        'Origin': 'https://cursor.com',
         'Cookie': cookie_str,
     }
-    resp = requests.get(url, headers=headers)
-    resp.raise_for_status()
+
+    rows: list[dict[str, object]] = []
+    page = 1
+    page_size = 100
+    total_count = None
+    while True:
+        payload = {
+            'teamId': 0,
+            'startDate': str(start_ts),
+            'endDate': str(end_ts),
+            'page': page,
+            'pageSize': page_size,
+        }
+        resp = requests.post(url, headers=headers, json=payload)
+        resp.raise_for_status()
+        body = resp.json()
+        events = body.get('usageEventsDisplay', [])
+        if not isinstance(events, list):
+            events = []
+        if total_count is None:
+            total_count = body.get('totalUsageEventsCount')
+
+        for event in events:
+            if not isinstance(event, dict):
+                continue
+            token_usage = event.get('tokenUsage') if isinstance(event.get('tokenUsage'), dict) else {}
+            timestamp = event.get('timestamp')
+            try:
+                event_dt = datetime.fromtimestamp(int(str(timestamp)) / 1000).isoformat()
+            except (TypeError, ValueError):
+                continue
+            input_tokens = int(token_usage.get('inputTokens', 0) or 0)
+            output_tokens = int(token_usage.get('outputTokens', 0) or 0)
+            cache_read_tokens = int(token_usage.get('cacheReadTokens', 0) or 0)
+            cache_write_tokens = int(token_usage.get('cacheWriteTokens', 0) or 0)
+            total_tokens = int(
+                token_usage.get('totalTokens')
+                or input_tokens + output_tokens + cache_read_tokens + cache_write_tokens
+            )
+            rows.append({
+                'Date': event_dt,
+                'Total Tokens': total_tokens,
+                'Input Tokens': input_tokens,
+                'Output Tokens': output_tokens,
+                'Cache Read Tokens': cache_read_tokens,
+                'Cache Write Tokens': cache_write_tokens,
+                'Model': event.get('model', ''),
+                'Charged Cents': event.get('chargedCents', ''),
+                'Request Costs': event.get('requestsCosts', ''),
+                'Kind': event.get('kind', ''),
+            })
+
+        if not events:
+            break
+        if isinstance(total_count, int) and len(rows) >= total_count:
+            break
+        if len(events) < page_size:
+            break
+        page += 1
     
     csv_path = os.path.join(SCRIPT_DIR, 'cursor.csv')
-    with open(csv_path, 'w') as f:
-        f.write(resp.text)
+    fieldnames = [
+        'Date',
+        'Total Tokens',
+        'Input Tokens',
+        'Output Tokens',
+        'Cache Read Tokens',
+        'Cache Write Tokens',
+        'Model',
+        'Charged Cents',
+        'Request Costs',
+        'Kind',
+    ]
+    with open(csv_path, 'w', newline='') as f:
+        writer = csv.DictWriter(f, fieldnames=fieldnames)
+        writer.writeheader()
+        writer.writerows(rows)
     return csv_path
 
 def export_glm(bearer_token, start_date, end_date):
@@ -369,8 +455,8 @@ def load_codex(path=None):
         data = json.load(f)
     daily = {}
     for entry in data.get('daily', []):
-        dt = datetime.strptime(entry['date'], '%b %d, %Y')
-        daily[dt.date()] = entry['totalTokens']
+        dt = parse_ccusage_daily_date(entry['date'])
+        daily[dt] = entry['totalTokens']
     return daily
 
 def load_cursor(path=None):
@@ -639,6 +725,27 @@ def load_opencode_detailed(exclude_glm: bool = True, start_ts: int | None = None
     Returns: {date: {model_id: {input, output, cache_read, cache_write}}}
     """
     daily_models = defaultdict(lambda: defaultdict(lambda: {'input': 0, 'output': 0, 'cache_read': 0, 'cache_write': 0}))
+    configure_opencode_skill_path()
+    try:
+        ocs_query = importlib.import_module('opencode_skill.query')
+    except ImportError:
+        ocs_query = None
+
+    if ocs_query is not None:
+        for m in ocs_query.iter_assistant_messages(since_ms=start_ts, until_ms=end_ts):
+            model_id = m.model or 'unknown'
+            if classify_opencode_bucket(m.provider or '', model_id, exclude_glm=exclude_glm) is None:
+                continue
+            total = m.tokens_input + m.tokens_output + m.tokens_reasoning + m.tokens_cache_read + m.tokens_cache_write
+            if total <= 0:
+                continue
+            dt = datetime.fromtimestamp(m.time_created / 1000).date()
+            daily_models[dt][model_id]['input'] += m.tokens_input
+            daily_models[dt][model_id]['output'] += m.tokens_output + m.tokens_reasoning
+            daily_models[dt][model_id]['cache_read'] += m.tokens_cache_read
+            daily_models[dt][model_id]['cache_write'] += m.tokens_cache_write
+        return dict(daily_models)
+
     if not OPENCODE_DB.exists():
         return dict(daily_models)
 
@@ -663,7 +770,7 @@ def load_opencode_detailed(exclude_glm: bool = True, start_ts: int | None = None
                     continue
                 tokens = msg.get('tokens', {})
                 inp = tokens.get('input', 0)
-                out = tokens.get('output', 0)
+                out = tokens.get('output', 0) + tokens.get('reasoning', 0)
                 cache = tokens.get('cache', {})
                 cache_r = cache.get('read', 0)
                 cache_w = cache.get('write', 0)
@@ -890,7 +997,7 @@ def calc_codex_cost(usage_path=None) -> DailyCosts:
         data = json.load(f)
     result = {}
     for entry in data.get('daily', []):
-        dt = datetime.strptime(entry['date'], '%b %d, %Y').date()
+        dt = parse_ccusage_daily_date(entry['date'])
         total_cost = 0.0
         for model_name, m in entry.get('models', {}).items():
             p = get_pricing(model_name)

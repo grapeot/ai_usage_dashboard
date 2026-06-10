@@ -18,6 +18,7 @@ from auto_usage import (
     classify_opencode_bucket,
     compute_daily_ai_active_seconds,
     date_to_epoch_ms,
+    export_cursor,
     generate_dashboard,
     load_claude_code,
     load_claude_code_detailed,
@@ -25,10 +26,12 @@ from auto_usage import (
     load_cursor,
     load_glm,
     load_opencode,
+    load_opencode_detailed,
     load_opencode_from_db,
     load_opencode_turn_intervals,
     merge_daily_tokens,
     merge_intervals,
+    parse_ccusage_daily_date,
     split_interval_by_day,
 )
 
@@ -281,8 +284,97 @@ def test_load_codex_returns_empty_when_export_missing(tmp_path):
     assert load_codex(tmp_path / 'missing-usage.json') == {}
 
 
+def test_load_codex_accepts_old_and_new_ccusage_date_formats(tmp_path):
+    usage_path = tmp_path / 'usage.json'
+    usage_path.write_text(json.dumps({
+        'daily': [
+            {'date': 'Mar 20, 2026', 'totalTokens': 10},
+            {'date': '2026-03-21', 'totalTokens': 20},
+        ],
+    }))
+
+    assert load_codex(usage_path) == {
+        date(2026, 3, 20): 10,
+        date(2026, 3, 21): 20,
+    }
+
+
+def test_parse_ccusage_daily_date_accepts_old_and_new_formats():
+    assert parse_ccusage_daily_date('Mar 20, 2026') == date(2026, 3, 20)
+    assert parse_ccusage_daily_date('2026-03-20') == date(2026, 3, 20)
+
+
 def test_load_cursor_returns_empty_when_export_missing(tmp_path):
     assert load_cursor(tmp_path / 'missing-cursor.csv') == {}
+
+
+def test_export_cursor_writes_csv_from_filtered_usage_events(monkeypatch, tmp_path):
+    start_ts = date_to_epoch_ms(date(2026, 3, 20))
+    first_event_ts = start_ts + 12 * 60 * 60 * 1000
+    second_event_ts = first_event_ts + 60 * 1000
+
+    class FakeResponse:
+        def __init__(self, body):
+            self._body = body
+
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return self._body
+
+    calls = []
+
+    def fake_post(url, headers=None, json=None):
+        calls.append((url, headers, json))
+        page = json['page']
+        if page == 1:
+            return FakeResponse({
+                'totalUsageEventsCount': 2,
+                'usageEventsDisplay': [
+                    {
+                        'timestamp': str(first_event_ts),
+                        'model': 'composer-2.5-fast',
+                        'chargedCents': 8,
+                        'requestsCosts': 2,
+                        'kind': 'USAGE_EVENT_KIND_INCLUDED_IN_PRO',
+                        'tokenUsage': {
+                            'inputTokens': 10,
+                            'outputTokens': 5,
+                            'cacheReadTokens': 100,
+                        },
+                    },
+                    {
+                        'timestamp': str(second_event_ts),
+                        'model': 'composer-2.5-fast',
+                        'tokenUsage': {
+                            'inputTokens': 1,
+                            'outputTokens': 2,
+                            'cacheReadTokens': 3,
+                            'cacheWriteTokens': 4,
+                            'totalTokens': 20,
+                        },
+                    },
+                ],
+            })
+        return FakeResponse({'totalUsageEventsCount': 2, 'usageEventsDisplay': []})
+
+    monkeypatch.setattr('auto_usage.SCRIPT_DIR', str(tmp_path))
+    monkeypatch.setattr('auto_usage.requests.post', fake_post)
+
+    csv_path = export_cursor('fake-cookie', start_ts, start_ts + 100000)
+
+    assert Path(csv_path).exists()
+    assert calls[0][0] == 'https://cursor.com/api/dashboard/get-filtered-usage-events'
+    assert calls[0][1]['Cookie'] == 'fake-cookie'
+    assert calls[0][2] == {
+        'teamId': 0,
+        'startDate': str(start_ts),
+        'endDate': str(start_ts + 100000),
+        'page': 1,
+        'pageSize': 100,
+    }
+    assert load_cursor(csv_path) == {date(2026, 3, 20): 135}
 
 
 def test_load_glm_accepts_date_only_and_minute_precision_timestamps(tmp_path):
@@ -490,6 +582,34 @@ def test_load_opencode_honors_env_opencode_skill_path(monkeypatch, tmp_path):
     )
 
     assert daily['gpt_opencode'] == {date(2026, 3, 20): 15}
+
+
+def test_load_opencode_detailed_uses_skill_and_counts_reasoning_as_output(monkeypatch):
+    ts = date_to_epoch_ms(date(2026, 3, 20)) + 12 * 60 * 60 * 1000
+
+    def fake_iter(since_ms=None, until_ms=None, **kw):
+        yield SimpleNamespace(
+            id='m1', session_id='ses', time_created=ts,
+            provider='openai', model='gpt-5.4',
+            tokens_input=1, tokens_output=2, tokens_reasoning=3,
+            tokens_cache_read=4, tokens_cache_write=5, source_db='opencode_archive.db',
+        )
+
+    fake_query_module = SimpleNamespace(iter_assistant_messages=fake_iter)
+    fake_package = SimpleNamespace(query=fake_query_module)
+    monkeypatch.setitem(sys.modules, 'opencode_skill', fake_package)
+    monkeypatch.setitem(sys.modules, 'opencode_skill.query', fake_query_module)
+
+    detailed = load_opencode_detailed(
+        start_ts=date_to_epoch_ms(date(2026, 3, 20)),
+        end_ts=date_to_epoch_ms(date(2026, 3, 21)),
+    )
+
+    assert detailed == {
+        date(2026, 3, 20): {
+            'gpt-5.4': {'input': 1, 'output': 5, 'cache_read': 4, 'cache_write': 5},
+        },
+    }
 
 
 def test_load_opencode_falls_back_to_local_db_when_skill_missing(monkeypatch, tmp_path):

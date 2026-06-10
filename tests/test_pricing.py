@@ -26,6 +26,11 @@ class TestGetPricing:
         assert get_pricing("gemini-3.1-pro-preview") == {"input": 2.0, "output": 12.0}
         assert get_pricing("deepseek-v4-flash") == {"input": 0.14, "cached": 0.0028, "output": 0.28}
         assert get_pricing("deepseek-v4-pro") == {"input": 0.435, "cached": 0.003625, "output": 0.87}
+        assert get_pricing("claude-fable-5") == {"input": 10.0, "cache_read": 1.0, "cache_write": 12.5, "cache_write_1h": 20.0, "output": 50.0}
+        assert get_pricing("grok-build-0.1") == {"input": 1.0, "cached": 0.2, "output": 2.0}
+        assert get_pricing("kimi-k2.6") == {"input": 0.95, "cached": 0.16, "output": 4.0}
+        assert get_pricing("minimax-m3") == {"input": 0.3, "cached": 0.06, "output": 1.2}
+        assert get_pricing("qwen3.5-397b-a17b") == {"input": 0.39, "output": 2.34}
 
     def test_alias_antigravity(self):
         p = get_pricing("antigravity-gemini-3-flash")
@@ -54,6 +59,12 @@ class TestGetPricing:
         assert get_pricing("grok-4-1-fast-non-reasoning") == {"input": 0.2, "cached": 0.05, "output": 0.5}
         assert get_pricing("grok-4-1-fast-reasoning") == {"input": 0.2, "cached": 0.05, "output": 0.5}
         assert get_pricing("grok-4.20-experimental-beta-0304-non-reasoning") == {"input": 0.2, "cached": 0.05, "output": 0.5}
+
+    def test_new_model_aliases(self):
+        assert get_pricing("qwen3.5:397b") == {"input": 0.39, "output": 2.34}
+        assert get_pricing("qwen3.5:397b-cloud") == {"input": 0.39, "output": 2.34}
+        assert get_pricing("minimax-m3:cloud") == get_pricing("minimax-m3")
+        assert get_pricing("kimi-k2.6:cloud") == get_pricing("kimi-k2.6")
 
     def test_unknown_returns_none(self):
         assert get_pricing("unknown-model-xyz") is None

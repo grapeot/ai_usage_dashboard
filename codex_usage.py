@@ -38,7 +38,7 @@ def parse_args():
 
 def fetch_codex_data(since_date):
     result = subprocess.run(
-        ['npx', '-y', '@ccusage/codex@latest', '--json', '-s', since_date],
+        ['npx', '-y', 'ccusage', 'codex', 'daily', '--json', '-s', since_date],
         capture_output=True,
         text=True,
         cwd=SCRIPT_DIR,
@@ -48,6 +48,13 @@ def fetch_codex_data(since_date):
         print(f"Error: {result.stderr}", file=sys.stderr)
         return None
     return json.loads(result.stdout)
+
+
+def parse_ccusage_daily_date(value):
+    try:
+        return datetime.strptime(value, '%b %d, %Y').strftime('%Y-%m-%d')
+    except ValueError:
+        return datetime.strptime(value, '%Y-%m-%d').strftime('%Y-%m-%d')
 
 def calculate_cost_for_model(model_data, model_name):
     if model_name not in PRICING:
@@ -94,7 +101,7 @@ def main():
     
     for entry in data.get('daily', []):
         date_str = entry['date']
-        dt = datetime.strptime(date_str, '%b %d, %Y').strftime('%Y-%m-%d')
+        dt = parse_ccusage_daily_date(date_str)
         
         models = entry.get('models', {})
         original_cost = entry.get('costUSD', 0)
