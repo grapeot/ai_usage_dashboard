@@ -64,6 +64,10 @@ def test_classify_opencode_bucket_deepseek_model_maps_to_deepseek():
     assert classify_opencode_bucket('custom-provider', 'deepseek-v4-flash') == 'deepseek'
 
 
+def test_classify_opencode_bucket_deepseek_v4_pro_model_maps_to_deepseek():
+    assert classify_opencode_bucket('ollama-cloud', 'deepseek-v4-pro') == 'deepseek'
+
+
 def test_classify_opencode_bucket_poe_deepseek_model_maps_to_deepseek():
     assert classify_opencode_bucket('poe', 'deepseek/deepseek-chat') == 'deepseek'
 

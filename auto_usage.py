@@ -92,7 +92,7 @@ def classify_opencode_bucket(provider_id: str, model_id: str, exclude_glm: bool 
         return 'anthropic'
     if provider_lower == 'openai' or model_lower.startswith('gpt-'):
         return 'gpt_opencode'
-    if 'deepseek' in provider_lower or model_lower.startswith(('deepseek-', 'deepseek/')):
+    if 'deepseek' in provider_lower or model_lower.startswith('deepseek'):
         return 'deepseek'
     return 'opencode_other'
 
