@@ -43,6 +43,10 @@ CLAUDE_PROJECT_DIRS = [
 ]
 
 GLM_PROVIDERS = ('zai-coding-plan', 'zai-coding-plan/glm-4.7')
+# GLM models routed through non-Z.ai providers (e.g. ollama-cloud/glm-5.2)
+# are also GLM and must be excluded from OpenCode buckets so they are not
+# double-counted against the GLM/Z.ai usage API totals.
+GLM_MODEL_PREFIXES = ('glm-',)
 
 DailyTokens = dict[date, int]
 DailyCosts = dict[date, float]
@@ -86,7 +90,7 @@ def classify_opencode_bucket(provider_id: str, model_id: str, exclude_glm: bool 
     provider_lower = (provider_id or '').lower()
     model_lower = (model_id or '').lower()
 
-    if exclude_glm and provider_lower in GLM_PROVIDERS:
+    if exclude_glm and (provider_lower in GLM_PROVIDERS or model_lower.startswith(GLM_MODEL_PREFIXES)):
         return None
     if 'anthropic' in provider_lower or model_lower.startswith('anthropic/'):
         return 'anthropic'

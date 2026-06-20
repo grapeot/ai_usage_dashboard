@@ -100,6 +100,18 @@ def test_classify_opencode_bucket_glm_provider_is_excluded_by_default():
     assert classify_opencode_bucket('zai-coding-plan', 'glm-5') is None
 
 
+def test_classify_opencode_bucket_ollama_cloud_glm_model_is_excluded_by_default():
+    assert classify_opencode_bucket('ollama-cloud', 'glm-5.2') is None
+
+
+def test_classify_opencode_bucket_ollama_cloud_glm_model_not_excluded_when_flag_off():
+    assert classify_opencode_bucket('ollama-cloud', 'glm-5.2', exclude_glm=False) == 'opencode_other'
+
+
+def test_classify_opencode_bucket_custom_provider_glm_model_is_excluded_by_default():
+    assert classify_opencode_bucket('custom-provider', 'glm-4.7') is None
+
+
 def test_classify_opencode_bucket_unknown_provider_stays_other():
     assert classify_opencode_bucket('mistral', 'mistral-large-2411') == 'opencode_other'
 
