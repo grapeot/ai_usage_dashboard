@@ -3,6 +3,7 @@
 #include <Arduino.h>
 
 constexpr size_t kMaxDays = 30;
+constexpr size_t kMaxQuotas = 12;
 
 enum class ViewMode {
   SevenDays = 0,
@@ -28,6 +29,14 @@ struct DailyEntry {
   double costUsd;
 };
 
+struct QuotaWindow {
+  String provider;
+  String label;
+  int percentage;
+  uint64_t nextResetTimeMs;
+  String nextResetIso;
+};
+
 struct DashboardData {
   String generatedAt;
   String startDate;
@@ -44,6 +53,8 @@ struct DashboardData {
   uint64_t other;
   DailyEntry daily[kMaxDays];
   size_t dailyCount;
+  QuotaWindow quotas[kMaxQuotas];
+  size_t quotaCount;
 };
 
 struct ChartRect {

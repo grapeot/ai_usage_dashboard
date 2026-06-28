@@ -52,6 +52,13 @@ On boot, the sketch:
 6. parses the latest 30-day JSON and renders the dashboard in 7-day mode by default
 7. enters light sleep and wakes every hour
 
+The screen is split into two zones: the left ~550px shows the stacked token bar
+chart and the AI Active Hours chart; the right ~220px shows a `Quotas` panel with
+one horizontal usage bar per provider window (GLM 5h/weekly/monthly, Codex
+5h/weekly). Each bar's filled portion uses the provider's palette color (GLM =
+green, Codex = yellow, Claude = red) and the reset time is printed below the bar
+as `r MM/DD HH:MM`. When no quota data is present the panel shows `--`.
+
 Wake sources:
 
 - **Timer**: wakes every hour by default; automatic network update happens only between 08:00 and 22:00.
@@ -79,6 +86,7 @@ If upload is unstable:
 
 - `secrets.h` contains local Wi-Fi credentials and must not be committed.
 - The title uses a compact format such as `2.54B tokens | $2258` to avoid legend overlap.
+- The dashboard layout is split: left zone (x=36..560) for the token and hours charts, right zone (x=575..795) for the quota panel. The legend is reflowed to fit the left zone.
 - Startup does not show intermediate status pages; success goes directly to the final visualization.
 - Battery percentage is estimated from `GPIO21 -> GPIO1 ADC` voltage readings and calibration, not from a fuel gauge.
 - Green and white buttons are configured as light-sleep wake sources.

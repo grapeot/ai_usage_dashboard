@@ -127,3 +127,32 @@ inline int scaledHeight(double value, double maxValue, int chartHeight) {
   }
   return h;
 }
+
+// Per-provider quota display color, matching the stacked-chart palette.
+inline uint16_t providerColor(const String& provider) {
+  if (provider == "glm") {
+    return TFT_GREEN;
+  }
+  if (provider == "codex") {
+    return TFT_YELLOW;
+  }
+  if (provider == "claude") {
+    return TFT_RED;
+  }
+  return TFT_BLACK;
+}
+
+// Compact reset label: "r MM/DD HH:MM" from an ISO timestamp, or "" when empty.
+inline String compactResetLabel(const String& iso) {
+  if (iso.length() < 16) {
+    return "";
+  }
+  // ISO local form "YYYY-MM-DDTHH:MM:SS" -> "MM/DD HH:MM"
+  String out = "r ";
+  out += iso.substring(5, 7);
+  out += "/";
+  out += iso.substring(8, 10);
+  out += " ";
+  out += iso.substring(11, 16);
+  return out;
+}

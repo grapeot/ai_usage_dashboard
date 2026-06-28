@@ -140,6 +140,56 @@ inline void drawHoursChart(EPaper& epaper, const DashboardData& data, const Char
   }
 }
 
+// Draw a horizontal usage bar for one quota window.
+// Filled portion (used) is colored; the remainder is white with a black outline.
+// Below the bar, the window label and reset time are drawn in small text.
+inline void drawQuotaBar(EPaper& epaper, int x, int y, int w, const QuotaWindow& qw) {
+  int barH = 14;
+  int pct = qw.percentage;
+  if (pct < 0) {
+    pct = 0;
+  }
+  if (pct > 100) {
+    pct = 100;
+  }
+  int fillW = (w * pct) / 100;
+
+  uint16_t color = providerColor(qw.provider);
+  epaper.fillRect(x, y, w, barH, TFT_WHITE);
+  if (fillW > 0) {
+    epaper.fillRect(x, y, fillW, barH, color);
+  }
+  epaper.drawRect(x, y, w, barH, TFT_BLACK);
+
+  epaper.setTextColor(TFT_BLACK, TFT_WHITE);
+  epaper.setTextSize(1);
+  String head = qw.provider + " " + qw.label;
+  epaper.drawString(head, x, y + barH + 2);
+  String reset = compactResetLabel(qw.nextResetIso);
+  if (reset.length() > 0) {
+    epaper.drawString(reset, x, y + barH + 14);
+  }
+}
+
+// Draw the right-hand quota panel: a header and one bar per quota window.
+inline void drawQuotaPanel(EPaper& epaper, const DashboardData& data, int x, int y, int w) {
+  epaper.setTextColor(TFT_BLACK, TFT_WHITE);
+  epaper.setTextSize(1);
+  epaper.drawString("Quotas", x, y);
+
+  if (data.quotaCount == 0) {
+    epaper.drawString("--", x, y + 18);
+    return;
+  }
+
+  int rowH = 36;
+  int barY = y + 16;
+  for (size_t i = 0; i < data.quotaCount; ++i) {
+    drawQuotaBar(epaper, x, barY, w, data.quotas[i]);
+    barY += rowH;
+  }
+}
+
 inline void renderDashboard(EPaper& epaper,
                             const DashboardData& data,
                             const BatteryStatus& battery,
@@ -150,38 +200,48 @@ inline void renderDashboard(EPaper& epaper,
   size_t startIndex = displayStartIndex(data, mode);
   size_t count = displayCount(data, mode);
   WindowSummary windowSummary = computeWindowSummary(data, startIndex, count);
-  Serial.printf("[render] mode=%s start=%u count=%u windowTokens=%llu windowCost=%.2f windowHours=%.2f\n",
+  Serial.printf("[render] mode=%s start=%u count=%u windowTokens=%llu windowCost=%.2f windowHours=%.2f quotaCount=%u\n",
                 viewModeLabel(mode),
                 static_cast<unsigned>(startIndex),
                 static_cast<unsigned>(count),
                 static_cast<unsigned long long>(windowSummary.totalTokens),
                 windowSummary.totalCostUsd,
-                windowSummary.totalAiHours);
+                windowSummary.totalAiHours,
+                static_cast<unsigned>(data.quotaCount));
+
+  // Left zone (charts) occupies x=10..560 (width 550).
+  // Right zone (quota panel) occupies x=575..795 (width 220).
+  constexpr int kChartX = 36;
+  constexpr int kLeftWidth = 524;
+  constexpr int kQuotaX = 575;
+  constexpr int kQuotaW = 220;
 
   epaper.setTextSize(1);
   char titleBuffer[96];
   snprintf(titleBuffer, sizeof(titleBuffer), "%s tokens | $%.0f | %s", formatMillions(windowSummary.totalTokens).c_str(), windowSummary.totalCostUsd, viewModeLabel(mode));
   epaper.drawString(String(titleBuffer), margin, 14);
 
-  drawLegendItem(epaper, 540, 12, TFT_WHITE, "Cursor", true);
-  drawLegendItem(epaper, 620, 12, TFT_GREEN, "GLM");
-  drawLegendItem(epaper, 704, 12, TFT_RED, "Claude");
-  drawLegendItemStriped(epaper, 540, 30, TFT_WHITE, "Gemini");
-  drawLegendItem(epaper, 620, 30, TFT_YELLOW, "GPT");
-  drawLegendItem(epaper, 704, 30, TFT_BLUE, "DeepSeek");
-  drawLegendItem(epaper, 704, 48, TFT_BLACK, "Other");
+  // Legend is reflowed to fit the left zone.
+  drawLegendItem(epaper, margin, 30, TFT_WHITE, "Cursor", true);
+  drawLegendItem(epaper, margin + 70, 30, TFT_GREEN, "GLM");
+  drawLegendItem(epaper, margin + 140, 30, TFT_RED, "Claude");
+  drawLegendItemStriped(epaper, margin, 46, TFT_WHITE, "Gemini");
+  drawLegendItem(epaper, margin + 70, 46, TFT_YELLOW, "GPT");
+  drawLegendItem(epaper, margin + 140, 46, TFT_BLUE, "DeepSeek");
+  drawLegendItem(epaper, margin + 210, 46, TFT_BLACK, "Other");
 
   epaper.setTextSize(1);
-  epaper.drawString("AI Active Time total: " + formatHours(windowSummary.totalAiHours), margin, 30);
+  epaper.drawString("AI Active Time total: " + formatHours(windowSummary.totalAiHours), margin, 62);
   char batteryBuffer[48];
   snprintf(batteryBuffer, sizeof(batteryBuffer), "Battery: %d%% (%.2fV)", battery.percentage, battery.voltage);
   epaper.drawString(String(batteryBuffer), 610, 456);
 
-  ChartRect stackedRect{56, 78, 720, 214};
-  ChartRect hoursRect{56, 336, 720, 88};
+  ChartRect stackedRect{kChartX, 78, kLeftWidth, 214};
+  ChartRect hoursRect{kChartX, 336, kLeftWidth, 88};
 
   drawStackedChart(epaper, data, stackedRect, startIndex, count, mode);
   drawHoursChart(epaper, data, hoursRect, startIndex, count, mode);
+  drawQuotaPanel(epaper, data, kQuotaX, 78, kQuotaW);
 
   epaper.setTextSize(1);
   epaper.drawString("Updated: " + data.generatedAt + " , " + autoUpdateLabel(), margin, 456);

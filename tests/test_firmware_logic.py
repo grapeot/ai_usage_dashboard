@@ -8,10 +8,13 @@ from firmware_logic import (
     SEVEN_DAYS,
     THIRTY_DAYS,
     compact_date_label,
+    compact_reset_label,
     display_count,
     display_start_index,
     green_button_should_fetch,
     is_within_auto_update_window,
+    provider_color,
+    quota_bar_fill_width,
     toggle_view_mode,
     white_button_should_fetch,
 )
@@ -79,3 +82,30 @@ def test_compact_date_label_shortens_iso_date():
 
 def test_compact_date_label_keeps_non_iso_text():
     assert compact_date_label("today") == "today"
+
+
+def test_compact_reset_label_shortens_iso_timestamp():
+    assert compact_reset_label("2026-06-28T15:00:09") == "r 06/28 15:00"
+
+
+def test_compact_reset_label_returns_empty_for_short_input():
+    assert compact_reset_label("") == ""
+    assert compact_reset_label("2026-06-28") == ""
+
+
+def test_provider_color_maps_known_providers():
+    assert provider_color("glm") == "green"
+    assert provider_color("codex") == "yellow"
+    assert provider_color("claude") == "red"
+    assert provider_color("unknown") == "black"
+
+
+def test_quota_bar_fill_width_scales_by_percentage():
+    assert quota_bar_fill_width(220, 0) == 0
+    assert quota_bar_fill_width(220, 100) == 220
+    assert quota_bar_fill_width(220, 50) == 110
+
+
+def test_quota_bar_fill_width_clamps_out_of_range():
+    assert quota_bar_fill_width(220, -5) == 0
+    assert quota_bar_fill_width(220, 150) == 220
