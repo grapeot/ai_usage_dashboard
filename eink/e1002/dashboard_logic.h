@@ -161,17 +161,48 @@ inline String providerDisplayName(const String& provider) {
   return provider;
 }
 
-// Reset label: "reset @ MM/DD HH:MM" from an ISO timestamp, or "" when empty.
+// Reset label: "reset in Xd Yh" or "reset in X.Yh" from an ISO timestamp.
+// Requires NTP-synchronized local time. Returns "" only when the timestamp
+// is too short to parse. When the reset time is in the past (e.g. the 5h
+// window is about to roll over and the device clock is slightly ahead),
+// shows "reset in 0.0h" instead of hiding the label.
 inline String compactResetLabel(const String& iso) {
   if (iso.length() < 16) {
     return "";
   }
-  // ISO local form "YYYY-MM-DDTHH:MM:SS" -> "reset @ MM/DD HH:MM"
-  String out = "reset @ ";
-  out += iso.substring(5, 7);
-  out += "/";
-  out += iso.substring(8, 10);
-  out += " ";
-  out += iso.substring(11, 16);
+  // Parse the ISO local timestamp into a time_t.
+  int year = iso.substring(0, 4).toInt();
+  int month = iso.substring(5, 7).toInt();
+  int day = iso.substring(8, 10).toInt();
+  int hour = iso.substring(11, 13).toInt();
+  int minute = iso.substring(14, 16).toInt();
+  struct tm tm_parts = {0};
+  tm_parts.tm_year = year - 1900;
+  tm_parts.tm_mon = month - 1;
+  tm_parts.tm_mday = day;
+  tm_parts.tm_hour = hour;
+  tm_parts.tm_min = minute;
+  time_t reset_epoch = mktime(&tm_parts);
+  time_t now_epoch = time(nullptr);
+  long diff_sec = (long)(reset_epoch - now_epoch);
+  if (diff_sec < 0) {
+    diff_sec = 0;
+  }
+  long total_minutes = diff_sec / 60;
+  long total_hours = total_minutes / 60;
+  long days = total_hours / 24;
+  long hours = total_hours % 24;
+  String out = "reset in ";
+  if (days > 0) {
+    out += String(days);
+    out += "d ";
+    out += String(hours);
+    out += "h";
+  } else {
+    // No days: show hours with one decimal place.
+    double precise_hours = (double)total_minutes / 60.0;
+    out += String(precise_hours, 1);
+    out += "h";
+  }
   return out;
 }

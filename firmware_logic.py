@@ -40,14 +40,35 @@ def compact_date_label(iso_date: str) -> str:
     return iso_date
 
 
-def compact_reset_label(iso: str) -> str:
-    """Reset label 'reset @ MM/DD HH:MM' from a local ISO timestamp.
+def compact_reset_label(iso: str, now: datetime | None = None) -> str:
+    """Reset label 'reset in Xd Yh' or 'reset in X.Yh' from a local ISO timestamp.
 
-    Mirrors the e-ink firmware's compactResetLabel.
+    Mirrors the e-ink firmware's compactResetLabel. When days > 0, hours are
+    rounded to integer. When days == 0, hours are shown with one decimal place.
+    Returns '' when the timestamp is too short or already in the past.
     """
     if len(iso) < 16:
         return ''
-    return f'reset @ {iso[5:7]}/{iso[8:10]} {iso[11:16]}'
+    if now is None:
+        now = datetime.now()
+    try:
+        reset_dt = datetime.fromisoformat(iso.replace('Z', '+00:00'))
+        if reset_dt.tzinfo is not None:
+            reset_dt = reset_dt.astimezone().replace(tzinfo=None)
+    except ValueError:
+        return ''
+    diff = reset_dt - now
+    total_seconds = diff.total_seconds()
+    if total_seconds < 0:
+        total_seconds = 0
+    total_minutes = int(total_seconds // 60)
+    total_hours = total_minutes // 60
+    days = total_hours // 24
+    hours = total_hours % 24
+    if days > 0:
+        return f'reset in {days}d {hours}h'
+    precise_hours = total_minutes / 60.0
+    return f'reset in {precise_hours:.1f}h'
 
 
 def provider_display_name(provider: str) -> str:
