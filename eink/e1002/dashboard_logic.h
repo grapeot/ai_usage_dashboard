@@ -162,8 +162,10 @@ inline String providerDisplayName(const String& provider) {
 }
 
 // Reset label: "reset in Xd Yh" or "reset in X.Yh" from an ISO timestamp.
-// Requires NTP-synchronized local time. Returns "" when the timestamp is too
-// short or already in the past.
+// Requires NTP-synchronized local time. Returns "" only when the timestamp
+// is too short to parse. When the reset time is in the past (e.g. the 5h
+// window is about to roll over and the device clock is slightly ahead),
+// shows "reset in 0.0h" instead of hiding the label.
 inline String compactResetLabel(const String& iso) {
   if (iso.length() < 16) {
     return "";
@@ -183,8 +185,8 @@ inline String compactResetLabel(const String& iso) {
   time_t reset_epoch = mktime(&tm_parts);
   time_t now_epoch = time(nullptr);
   long diff_sec = (long)(reset_epoch - now_epoch);
-  if (diff_sec <= 0) {
-    return "";
+  if (diff_sec < 0) {
+    diff_sec = 0;
   }
   long total_minutes = diff_sec / 60;
   long total_hours = total_minutes / 60;

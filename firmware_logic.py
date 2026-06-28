@@ -59,8 +59,8 @@ def compact_reset_label(iso: str, now: datetime | None = None) -> str:
         return ''
     diff = reset_dt - now
     total_seconds = diff.total_seconds()
-    if total_seconds <= 0:
-        return ''
+    if total_seconds < 0:
+        total_seconds = 0
     total_minutes = int(total_seconds // 60)
     total_hours = total_minutes // 60
     days = total_hours // 24

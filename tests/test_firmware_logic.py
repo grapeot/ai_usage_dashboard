@@ -99,11 +99,11 @@ def test_compact_reset_label_formats_days_and_hours():
     assert compact_reset_label(reset.isoformat(), now) == "reset in 3d 3h"
 
 
-def test_compact_reset_label_returns_empty_for_past_time():
+def test_compact_reset_label_returns_zero_for_past_time():
     from datetime import datetime
     now = datetime(2026, 6, 28, 12, 0)
     reset = datetime(2026, 6, 28, 10, 0)  # 2 hours ago
-    assert compact_reset_label(reset.isoformat(), now) == ""
+    assert compact_reset_label(reset.isoformat(), now) == "reset in 0.0h"
 
 
 def test_compact_reset_label_returns_empty_for_short_input():
