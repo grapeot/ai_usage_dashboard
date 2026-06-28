@@ -79,6 +79,7 @@ inline void drawStackedChart(EPaper& epaper, const DashboardData& data, const Ch
     } segments[] = {
         {data.daily[i].cursor, TFT_WHITE, true, false},
         {data.daily[i].glm, TFT_GREEN, false, false},
+        {data.daily[i].gemini, TFT_CYAN, false, false},
         {data.daily[i].claude, TFT_RED, false, false},
         {data.daily[i].gpt, TFT_YELLOW, false, false},
         {data.daily[i].deepseek, TFT_BLUE, false, false},
@@ -165,9 +166,10 @@ inline void renderDashboard(EPaper& epaper,
   drawLegendItem(epaper, 540, 12, TFT_WHITE, "Cursor", true);
   drawLegendItem(epaper, 620, 12, TFT_GREEN, "GLM");
   drawLegendItem(epaper, 704, 12, TFT_RED, "Claude");
-  drawLegendItem(epaper, 540, 30, TFT_YELLOW, "GPT");
-  drawLegendItem(epaper, 620, 30, TFT_BLUE, "DeepSeek");
-  drawLegendItem(epaper, 704, 30, TFT_BLACK, "Other");
+  drawLegendItem(epaper, 540, 30, TFT_CYAN, "Gemini");
+  drawLegendItem(epaper, 620, 30, TFT_YELLOW, "GPT");
+  drawLegendItem(epaper, 704, 30, TFT_BLUE, "DeepSeek");
+  drawLegendItem(epaper, 704, 48, TFT_BLACK, "Other");
 
   epaper.setTextSize(1);
   epaper.drawString("AI Active Time total: " + formatHours(windowSummary.totalAiHours), margin, 30);

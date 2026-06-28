@@ -86,8 +86,8 @@ The current reference implementation targets the **Seeed Studio reTerminal E1002
 Hardware configuration lives in `eink/e1002/secrets.h` next to the Arduino sketch. That file contains Wi-Fi and local service URLs and must not be committed. The public template is `eink/e1002/secrets.h.example`:
 
 ```cpp
-constexpr const char* kWifiSsid = "YOUR_WIFI_SSID";
-constexpr const char* kWifiPassword = "YOUR_WIFI_PASSWORD";
+#define AI_USAGE_WIFI_SSID "YOUR_WIFI_SSID"
+#define AI_USAGE_WIFI_PASSWORD "YOUR_WIFI_PASSWORD"
 
 #define AI_USAGE_DASHBOARD_UPDATE_URL "http://YOUR_LOCAL_HOST:7995/api/v1/display/update"
 #define AI_USAGE_DASHBOARD_CACHED_URL "http://YOUR_LOCAL_HOST:7995/token_usage.json"

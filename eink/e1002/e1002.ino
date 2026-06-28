@@ -1,5 +1,7 @@
 #include "driver.h"
+#if __has_include("secrets.h")
 #include "secrets.h"
+#endif
 
 #include <ArduinoJson.h>
 #include "TFT_eSPI.h"
@@ -23,9 +25,19 @@ namespace {
 #define AI_USAGE_DASHBOARD_DEVICE_ID "example-e1002"
 #endif
 
+#ifndef AI_USAGE_WIFI_SSID
+#define AI_USAGE_WIFI_SSID "YOUR_WIFI_SSID"
+#endif
+
+#ifndef AI_USAGE_WIFI_PASSWORD
+#define AI_USAGE_WIFI_PASSWORD "YOUR_WIFI_PASSWORD"
+#endif
+
 constexpr const char* kDashboardUpdateUrl = AI_USAGE_DASHBOARD_UPDATE_URL;
 constexpr const char* kDashboardCachedUrl = AI_USAGE_DASHBOARD_CACHED_URL;
 constexpr const char* kDeviceId = AI_USAGE_DASHBOARD_DEVICE_ID;
+constexpr const char* kWifiSsid = AI_USAGE_WIFI_SSID;
+constexpr const char* kWifiPassword = AI_USAGE_WIFI_PASSWORD;
 constexpr uint64_t kAutoUpdateOnSleepMicros = 1ULL * 60ULL * 60ULL * 1000000ULL;
 constexpr uint32_t kWifiTimeoutMs = 30000;
 constexpr uint32_t kHttpTimeoutMs = 60000;

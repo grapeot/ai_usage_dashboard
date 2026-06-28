@@ -30,6 +30,8 @@ Never commit `.env`, cookies, bearer tokens, Wi-Fi credentials, generated usage 
 
 E1002 local configuration belongs in `eink/e1002/secrets.h`; only `secrets.h.example` is public.
 
+Before copying `eink/e1002/secrets.h.example` to `eink/e1002/secrets.h`, check whether `secrets.h` already exists. Never overwrite an existing `secrets.h`; it may contain the user's real Wi-Fi and dashboard configuration and is gitignored, so git cannot recover it.
+
 ## Code Boundaries
 
 Keep this pass scaffold-oriented. Do not move root scripts into `src/` unless a migration is explicitly requested. Preserve existing command entry points (`auto_usage.py`, `codex_usage.py`, `opencode_token_analyzer.py`, `local_display_service.py`) because local workflows and tests depend on them.
