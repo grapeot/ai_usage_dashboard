@@ -6,6 +6,7 @@ Supports API-equivalent USD cost estimation. See docs/rfc.md.
 import json
 import csv
 import importlib
+import re
 import subprocess
 import os
 import sys
@@ -824,6 +825,77 @@ def format_quotas_block(snapshots: list[QuotaSnapshot]) -> str:
     return '\n'.join(lines)
 
 
+# Ollama web settings page. The quota usage bars are server-rendered in the HTML
+# at https://ollama.com/settings (no JSON API). We parse the two windows
+# (Session = 5h, Weekly) from the markup: the percentage from the
+# "X% used" span and the reset time from the local-time div's data-time attr.
+OLLAMA_SETTINGS_URL = 'https://ollama.com/settings'
+OUTPUT_OLLAMA_QUOTA_HTML = 'ollama_settings.html'
+
+
+def export_ollama_quota(cookie: str) -> str:
+    """Fetch ollama.com/settings HTML and cache it to ollama_settings.html.
+
+    Requires the full browser cookie string (cf_clearance + session). The page
+    is server-rendered; the HTML is the source of quota data.
+    """
+    headers = {
+        'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:152.0) Gecko/20100101 Firefox/152.0',
+        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+        'Accept-Language': 'en-US,en;q=0.9',
+        'Cookie': cookie,
+    }
+    resp = requests.get(OLLAMA_SETTINGS_URL, headers=headers)
+    resp.raise_for_status()
+    html_path = os.path.join(SCRIPT_DIR, OUTPUT_OLLAMA_QUOTA_HTML)
+    with open(html_path, 'w') as f:
+        f.write(resp.text)
+    return resp.text
+
+
+def normalize_ollama_quota(html: str) -> list[QuotaSnapshot]:
+    """Parse the two Ollama usage windows (Session = 5h, Weekly) from HTML.
+
+    The page renders each window as a block containing a "<pct>% used" span and
+    a local-time div with data-time="<ISO reset time>". We pair them in
+    document order: the first block is Session (5 Hours), the second is Weekly.
+    """
+    if not html:
+        return []
+    pct_re = re.compile(r'([\d.]+)%\s*used', re.IGNORECASE)
+    time_re = re.compile(r'data-time="([^"]+)"')
+    percentages = [float(m.group(1)) for m in pct_re.finditer(html)]
+    reset_times = [m.group(1) for m in time_re.finditer(html)]
+    snapshots: list[QuotaSnapshot] = []
+    labels = ['5 Hours', 'Weekly']
+    for i, pct in enumerate(percentages[:2]):
+        reset_iso = reset_times[i] if i < len(reset_times) else None
+        reset_ms: int | None = None
+        if reset_iso:
+            try:
+                reset_ms = int(datetime.fromisoformat(reset_iso.replace('Z', '+00:00')).timestamp() * 1000)
+            except ValueError:
+                reset_iso = None
+        snapshots.append({
+            'provider': 'ollama',
+            'label': labels[i] if i < len(labels) else f'Window {i+1}',
+            'percentage': int(round(pct)),
+            'next_reset_time_ms': reset_ms,
+            'next_reset_iso': reset_iso,
+        })
+    return snapshots
+
+
+def load_ollama_quota(path: str | None = None) -> list[QuotaSnapshot]:
+    """Load and parse the cached ollama_settings.html, returning [] when absent."""
+    if path is None:
+        path = os.path.join(SCRIPT_DIR, OUTPUT_OLLAMA_QUOTA_HTML)
+    if not os.path.exists(path):
+        return []
+    with open(path) as f:
+        return normalize_ollama_quota(f.read())
+
+
 def iter_claude_session_files(project_dirs: list[Path] | None = None):
     roots = project_dirs or CLAUDE_PROJECT_DIRS
     seen: set[Path] = set()
@@ -1590,10 +1662,20 @@ def build_latest_dashboard_payload(days: int = 30, *, no_cost: bool = False, ski
             print(f"Failed to export GLM quota: {e}")
     glm_quota = load_glm_quota()
 
+    ollama_cookie = os.environ.get('OLLAMA_COOKIE', '')
+    if ollama_cookie:
+        print("Exporting Ollama quota...")
+        try:
+            export_ollama_quota(ollama_cookie)
+        except Exception as e:
+            print(f"Failed to export Ollama quota: {e}")
+    ollama_quota = load_ollama_quota()
+
     print("Loading Codex quota from local session JSONL...")
     codex_quota = load_codex_quota()
 
-    quotas = glm_quota_to_unified(glm_quota) + codex_quota
+    # Provider order for display: z.ai GLM -> Ollama -> Codex.
+    quotas = glm_quota_to_unified(glm_quota) + ollama_quota + codex_quota
 
     print("Loading Claude Code data...")
     start_d = datetime.strptime(start_date, '%Y-%m-%d').date()

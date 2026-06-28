@@ -30,6 +30,7 @@ from auto_usage import (
     load_cursor,
     load_glm,
     load_glm_quota,
+    load_ollama_quota,
     load_opencode,
     load_opencode_detailed,
     load_opencode_from_db,
@@ -38,6 +39,7 @@ from auto_usage import (
     merge_intervals,
     normalize_codex_rate_limits,
     normalize_glm_quota,
+    normalize_ollama_quota,
     parse_ccusage_daily_date,
     split_interval_by_day,
 )
@@ -1118,3 +1120,64 @@ def test_load_codex_quota_returns_empty_when_no_sessions(tmp_path, monkeypatch):
     monkeypatch.setattr(Path, 'home', lambda: tmp_path)
 
     assert load_codex_quota() == []
+
+
+# --- Ollama quota ---
+
+_OLLAMA_HTML_SAMPLE = """
+<div>
+  <div class="flex justify-between mb-2">
+    <span class="text-sm ">Session usage</span>
+    <span class="text-sm ">47.1% used</span>
+  </div>
+  <div class="text-xs text-neutral-500 mt-1 local-time" data-time="2026-06-28T22:00:00Z">Resets in 3 hours.</div>
+</div>
+<div>
+  <div class="flex justify-between mb-2">
+    <span class="text-sm">Weekly usage</span>
+    <span class="text-sm ">51.1% used</span>
+  </div>
+  <div class="text-xs text-neutral-500 mt-1 local-time" data-time="2026-06-29T00:00:00Z">Resets in 5 hours.</div>
+</div>
+"""
+
+
+def test_normalize_ollama_quota_parses_session_and_weekly():
+    snapshots = normalize_ollama_quota(_OLLAMA_HTML_SAMPLE)
+
+    assert len(snapshots) == 2
+    assert snapshots[0]['provider'] == 'ollama'
+    assert snapshots[0]['label'] == '5 Hours'
+    assert snapshots[0]['percentage'] == 47
+    assert snapshots[0]['next_reset_iso'] == '2026-06-28T22:00:00Z'
+    assert snapshots[1]['label'] == 'Weekly'
+    assert snapshots[1]['percentage'] == 51
+    assert snapshots[1]['next_reset_iso'] == '2026-06-29T00:00:00Z'
+
+
+def test_normalize_ollama_quota_returns_empty_for_empty_html():
+    assert normalize_ollama_quota('') == []
+    assert normalize_ollama_quota('<html>no quota here</html>') == []
+
+
+def test_normalize_ollama_quota_handles_missing_reset_time():
+    html = '<span>30% used</span><span>40% used</span>'
+
+    snapshots = normalize_ollama_quota(html)
+
+    assert snapshots[0]['next_reset_iso'] is None
+    assert snapshots[0]['next_reset_time_ms'] is None
+
+
+def test_load_ollama_quota_reads_cached_file(tmp_path):
+    html_path = tmp_path / 'ollama_settings.html'
+    html_path.write_text(_OLLAMA_HTML_SAMPLE)
+
+    snapshots = load_ollama_quota(str(html_path))
+
+    assert len(snapshots) == 2
+    assert snapshots[0]['label'] == '5 Hours'
+
+
+def test_load_ollama_quota_returns_empty_when_file_missing(tmp_path):
+    assert load_ollama_quota(str(tmp_path / 'missing.html')) == []
