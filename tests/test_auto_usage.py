@@ -20,10 +20,13 @@ from auto_usage import (
     date_to_epoch_ms,
     export_cursor,
     format_glm_quota_block,
+    format_quotas_block,
     generate_dashboard,
+    glm_quota_to_unified,
     load_claude_code,
     load_claude_code_detailed,
     load_codex,
+    load_codex_quota,
     load_cursor,
     load_glm,
     load_glm_quota,
@@ -33,6 +36,7 @@ from auto_usage import (
     load_opencode_turn_intervals,
     merge_daily_tokens,
     merge_intervals,
+    normalize_codex_rate_limits,
     normalize_glm_quota,
     parse_ccusage_daily_date,
     split_interval_by_day,
@@ -975,3 +979,142 @@ def test_generate_dashboard_prints_quota_block(capsys):
     out = capsys.readouterr().out
     assert 'GLM / Z.ai Coding Plan Quota:' in out
     assert '5 Hours Quota: 13% used' in out
+
+
+# --- Codex quota ---
+
+_CODEX_RATE_LIMITS = {
+    'limit_id': 'codex',
+    'primary': {'used_percent': 12.0, 'window_minutes': 300, 'resets_at': 1781811012},
+    'secondary': {'used_percent': 4.0, 'window_minutes': 10080, 'resets_at': 1782338757},
+    'credits': None,
+    'plan_type': 'pro',
+}
+
+
+def test_normalize_codex_rate_limits_maps_primary_and_secondary():
+    snapshots = normalize_codex_rate_limits(_CODEX_RATE_LIMITS)
+
+    assert len(snapshots) == 2
+    assert snapshots[0]['provider'] == 'codex'
+    assert snapshots[0]['label'] == '5 Hours'
+    assert snapshots[0]['percentage'] == 12
+    assert snapshots[0]['next_reset_time_ms'] == 1781811012000
+    assert snapshots[1]['provider'] == 'codex'
+    assert snapshots[1]['label'] == 'Weekly'
+    assert snapshots[1]['percentage'] == 4
+
+
+def test_normalize_codex_rate_limits_skips_missing_slots():
+    body = {'primary': {'used_percent': 50.0, 'window_minutes': 300, 'resets_at': 1781811012}}
+
+    snapshots = normalize_codex_rate_limits(body)
+
+    assert len(snapshots) == 1
+    assert snapshots[0]['label'] == '5 Hours'
+
+
+def test_normalize_codex_rate_limits_uses_fallback_label_for_unknown_window():
+    body = {'primary': {'used_percent': 10.0, 'window_minutes': 720, 'resets_at': 1781811012}}
+
+    snapshots = normalize_codex_rate_limits(body)
+
+    assert snapshots[0]['label'] == '720m'
+
+
+def test_normalize_codex_rate_limits_returns_empty_when_no_usable_slots():
+    assert normalize_codex_rate_limits({'credits': None}) == []
+    assert normalize_codex_rate_limits({'primary': {'window_minutes': 300}}) == []
+
+
+def test_normalize_codex_rate_limits_handles_missing_reset_time():
+    body = {'primary': {'used_percent': 5.0, 'window_minutes': 300}}
+
+    snapshots = normalize_codex_rate_limits(body)
+
+    assert snapshots[0]['next_reset_time_ms'] is None
+    assert snapshots[0]['next_reset_iso'] is None
+
+
+def test_glm_quota_to_unified_tags_provider_and_preserves_fields():
+    glm_snapshots = normalize_glm_quota(_GLM_QUOTA_SAMPLE)
+
+    unified = glm_quota_to_unified(glm_snapshots)
+
+    assert all(s['provider'] == 'glm' for s in unified)
+    assert unified[1]['label'] == '5 Hours Quota'
+    assert unified[1]['percentage'] == 13
+    assert unified[0]['usage'] == 4000
+    assert unified[0]['remaining'] == 4000
+
+
+def test_format_quotas_block_groups_by_provider():
+    quotas = glm_quota_to_unified(normalize_glm_quota(_GLM_QUOTA_SAMPLE)) + normalize_codex_rate_limits(_CODEX_RATE_LIMITS)
+
+    block = format_quotas_block(quotas)
+
+    assert 'AI Usage Quotas:' in block
+    assert 'glm 5 Hours Quota: 13% used' in block
+    assert 'codex 5 Hours: 12% used' in block
+    assert 'codex Weekly: 4% used' in block
+
+
+def test_format_quotas_block_returns_empty_for_no_snapshots():
+    assert format_quotas_block([]) == ''
+
+
+def test_build_eink_dashboard_payload_includes_unified_quotas_when_provided():
+    quotas = normalize_codex_rate_limits(_CODEX_RATE_LIMITS)
+
+    payload = build_eink_dashboard_payload(
+        cursor={}, glm={}, gemini={}, claude={}, gpt_opencode={}, deepseek={}, other={},
+        start_date='2026-06-22', end_date='2026-06-28',
+        quotas=quotas,
+    )
+
+    assert 'quotas' in payload
+    quota = cast(list[dict[str, object]], payload['quotas'])
+    assert len(quota) == 2
+    assert quota[0]['provider'] == 'codex'
+
+
+def test_build_eink_dashboard_payload_omits_quotas_when_empty():
+    payload = build_eink_dashboard_payload(
+        cursor={}, glm={}, gemini={}, claude={}, gpt_opencode={}, deepseek={}, other={},
+        start_date='2026-06-22', end_date='2026-06-28',
+        quotas=[],
+    )
+
+    assert 'quotas' not in payload
+
+
+def test_load_codex_quota_reads_latest_rate_limits_from_jsonl(tmp_path, monkeypatch):
+    codex_root = tmp_path / '.codex'
+    sessions = codex_root / 'sessions' / '2026' / '06' / '18'
+    sessions.mkdir(parents=True)
+    older = sessions / 'rollout-a.jsonl'
+    newer = sessions / 'rollout-b.jsonl'
+    older.write_text(
+        '{"timestamp":"2026-06-18T10:00:00Z","type":"event_msg","payload":{"type":"token_count","rate_limits":{"primary":{"used_percent":1.0,"window_minutes":300,"resets_at":1781800000}}}}\n'
+    )
+    newer.write_text(
+        '{"timestamp":"2026-06-18T12:30:12Z","type":"event_msg","payload":{"type":"token_count","rate_limits":{"primary":{"used_percent":12.0,"window_minutes":300,"resets_at":1781811012},"secondary":{"used_percent":4.0,"window_minutes":10080,"resets_at":1782338757}}}}\n'
+    )
+    archived = codex_root / 'archived_sessions'
+    archived.mkdir()
+    archived.joinpath('rollout-old.jsonl').write_text(
+        '{"timestamp":"2026-03-19T13:00:00Z","type":"event_msg","payload":{"type":"token_count","rate_limits":{"primary":{"used_percent":99.0,"window_minutes":300,"resets_at":1780000000}}}}\n'
+    )
+    monkeypatch.setattr(Path, 'home', lambda: tmp_path)
+
+    snapshots = load_codex_quota()
+
+    assert len(snapshots) == 2
+    assert snapshots[0]['percentage'] == 12
+    assert snapshots[1]['percentage'] == 4
+
+
+def test_load_codex_quota_returns_empty_when_no_sessions(tmp_path, monkeypatch):
+    monkeypatch.setattr(Path, 'home', lambda: tmp_path)
+
+    assert load_codex_quota() == []
