@@ -19,18 +19,21 @@ from auto_usage import (
     compute_daily_ai_active_seconds,
     date_to_epoch_ms,
     export_cursor,
+    format_glm_quota_block,
     generate_dashboard,
     load_claude_code,
     load_claude_code_detailed,
     load_codex,
     load_cursor,
     load_glm,
+    load_glm_quota,
     load_opencode,
     load_opencode_detailed,
     load_opencode_from_db,
     load_opencode_turn_intervals,
     merge_daily_tokens,
     merge_intervals,
+    normalize_glm_quota,
     parse_ccusage_daily_date,
     split_interval_by_day,
 )
@@ -747,3 +750,228 @@ def test_load_claude_code_detailed_normalizes_fast_opus_variant_with_dotted_mode
         'cache_write': 20,
         'cache_write_1h': 0,
     }
+
+
+# --- GLM / Z.ai quota ---
+
+_GLM_QUOTA_SAMPLE = {
+    'code': 200,
+    'msg': 'Operation successful',
+    'success': True,
+    'data': {
+        'limits': [
+            {
+                'type': 'TIME_LIMIT',
+                'unit': 5,
+                'number': 1,
+                'usage': 4000,
+                'currentValue': 0,
+                'remaining': 4000,
+                'percentage': 0,
+                'nextResetTime': 1784225431994,
+                'usageDetails': [
+                    {'modelCode': 'search-prime', 'usage': 0},
+                    {'modelCode': 'web-reader', 'usage': 0},
+                ],
+            },
+            {
+                'type': 'TOKENS_LIMIT',
+                'unit': 3,
+                'number': 5,
+                'percentage': 13,
+                'nextResetTime': 1782684009923,
+            },
+            {
+                'type': 'TOKENS_LIMIT',
+                'unit': 6,
+                'number': 1,
+                'percentage': 43,
+                'nextResetTime': 1782843031997,
+            },
+        ],
+        'level': 'max',
+    },
+}
+
+
+def test_normalize_glm_quota_maps_known_windows_to_labels():
+    snapshots = normalize_glm_quota(_GLM_QUOTA_SAMPLE)
+
+    labels = [s['label'] for s in snapshots]
+    assert labels == [
+        'Monthly Web Search / Reader / Zread Quota',
+        '5 Hours Quota',
+        'Weekly Quota',
+    ]
+
+
+def test_normalize_glm_quota_converts_reset_timestamps_to_iso():
+    snapshots = normalize_glm_quota(_GLM_QUOTA_SAMPLE)
+
+    monthly = snapshots[0]
+    assert monthly['next_reset_time_ms'] == 1784225431994
+    assert monthly['next_reset_iso'] is not None
+    # ISO form ends with seconds precision; epoch ms maps to a deterministic local second.
+    assert monthly['next_reset_iso'].endswith(':31')
+
+
+def test_normalize_glm_quota_reports_absolute_counts_for_monthly_tool_limit():
+    snapshots = normalize_glm_quota(_GLM_QUOTA_SAMPLE)
+
+    monthly = snapshots[0]
+    assert monthly['type'] == 'TIME_LIMIT'
+    assert monthly['unit'] == 5
+    assert monthly['usage'] == 4000
+    assert monthly['remaining'] == 4000
+    assert monthly['current_value'] == 0
+    assert monthly['usage_details'] == [
+        {'modelCode': 'search-prime', 'usage': 0},
+        {'modelCode': 'web-reader', 'usage': 0},
+    ]
+
+
+def test_normalize_glm_quota_leaves_absolute_counts_none_for_token_limits():
+    snapshots = normalize_glm_quota(_GLM_QUOTA_SAMPLE)
+
+    five_hour = snapshots[1]
+    assert five_hour['type'] == 'TOKENS_LIMIT'
+    assert five_hour['unit'] == 3
+    assert five_hour['percentage'] == 13
+    assert five_hour['usage'] is None
+    assert five_hour['remaining'] is None
+    assert five_hour['usage_details'] is None
+
+
+def test_normalize_glm_quota_falls_back_to_generic_label_for_unknown_window():
+    body = {
+        'success': True,
+        'data': {
+            'limits': [
+                {'type': 'NEW_LIMIT', 'unit': 9, 'percentage': 7, 'nextResetTime': 1782843031997},
+            ],
+        },
+    }
+
+    snapshots = normalize_glm_quota(body)
+
+    assert snapshots[0]['label'] == 'NEW_LIMIT unit=9'
+    assert snapshots[0]['percentage'] == 7
+
+
+def test_normalize_glm_quota_returns_empty_when_response_missing_limits():
+    assert normalize_glm_quota({'success': True, 'data': {}}) == []
+    assert normalize_glm_quota({'success': False}) == []
+    assert normalize_glm_quota({}) == []
+
+
+def test_normalize_glm_quota_handles_missing_reset_time():
+    body = {
+        'success': True,
+        'data': {'limits': [{'type': 'TOKENS_LIMIT', 'unit': 3, 'percentage': 0}]},
+    }
+
+    snapshots = normalize_glm_quota(body)
+
+    assert snapshots[0]['next_reset_time_ms'] is None
+    assert snapshots[0]['next_reset_iso'] is None
+
+
+def test_load_glm_quota_reads_cached_file(tmp_path):
+    quota_path = tmp_path / 'glm_quota.json'
+    quota_path.write_text(json.dumps(_GLM_QUOTA_SAMPLE))
+
+    snapshots = load_glm_quota(str(quota_path))
+
+    assert len(snapshots) == 3
+    assert snapshots[1]['label'] == '5 Hours Quota'
+
+
+def test_load_glm_quota_returns_empty_when_file_missing(tmp_path):
+    assert load_glm_quota(str(tmp_path / 'missing.json')) == []
+
+
+def test_load_glm_quota_returns_empty_when_file_malformed(tmp_path):
+    quota_path = tmp_path / 'glm_quota.json'
+    quota_path.write_text(json.dumps({'success': True, 'data': {'limits': 'not-a-list'}}))
+
+    assert load_glm_quota(str(quota_path)) == []
+
+
+def test_format_glm_quota_block_renders_percentage_and_reset_for_each_window():
+    snapshots = normalize_glm_quota(_GLM_QUOTA_SAMPLE)
+
+    block = format_glm_quota_block(snapshots)
+
+    assert 'GLM / Z.ai Coding Plan Quota:' in block
+    assert '5 Hours Quota: 13% used' in block
+    assert 'Weekly Quota: 43% used' in block
+    assert 'Monthly Web Search / Reader / Zread Quota: 0% used' in block
+    assert 'used 4000/8000' in block
+    assert 'resets ' in block
+
+
+def test_format_glm_quota_block_returns_empty_string_for_no_snapshots():
+    assert format_glm_quota_block([]) == ''
+
+
+def test_build_eink_dashboard_payload_includes_glm_quota_when_provided():
+    snapshots = normalize_glm_quota(_GLM_QUOTA_SAMPLE)
+
+    payload = build_eink_dashboard_payload(
+        cursor={},
+        glm={},
+        gemini={},
+        claude={},
+        gpt_opencode={},
+        deepseek={},
+        other={},
+        start_date='2026-06-22',
+        end_date='2026-06-28',
+        glm_quota=snapshots,
+    )
+
+    assert 'glm_quota' in payload
+    quota = cast(list[dict[str, object]], payload['glm_quota'])
+    assert len(quota) == 3
+    assert quota[1]['label'] == '5 Hours Quota'
+
+
+def test_build_eink_dashboard_payload_omits_glm_quota_when_empty():
+    payload = build_eink_dashboard_payload(
+        cursor={},
+        glm={},
+        gemini={},
+        claude={},
+        gpt_opencode={},
+        deepseek={},
+        other={},
+        start_date='2026-06-22',
+        end_date='2026-06-28',
+        glm_quota=[],
+    )
+
+    assert 'glm_quota' not in payload
+
+
+def test_generate_dashboard_prints_quota_block(capsys):
+    snapshots = normalize_glm_quota(_GLM_QUOTA_SAMPLE)
+
+    generate_dashboard(
+        cursor={date(2026, 6, 22): 0},
+        glm={},
+        gemini={},
+        claude={},
+        gpt_opencode={},
+        deepseek={},
+        other={},
+        start_date='2026-06-22',
+        end_date='2026-06-22',
+        daily_costs=None,
+        daily_active_seconds=None,
+        skip_desktop_chart=True,
+        glm_quota=snapshots,
+    )
+
+    out = capsys.readouterr().out
+    assert 'GLM / Z.ai Coding Plan Quota:' in out
+    assert '5 Hours Quota: 13% used' in out

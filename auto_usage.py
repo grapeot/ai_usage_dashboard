@@ -49,8 +49,55 @@ GLM_PROVIDERS = ('zai-coding-plan', 'zai-coding-plan/glm-4.7')
 # against the GLM/Z.ai usage API totals.
 GLM_MODEL_PREFIXES = ('glm-',)
 
+# GLM / Z.ai coding-plan quota endpoint. The web dashboard calls
+# /api/monitor/usage/quota/limit (no query params) with the same bearer token
+# used for /api/monitor/usage/model-usage. The response describes rolling
+# usage windows (5-hour token quota, weekly token quota, monthly tool quota).
+GLM_QUOTA_URL = 'https://api.z.ai/api/monitor/usage/quota/limit'
+OUTPUT_GLM_QUOTA_JSON = 'glm_quota.json'
+
+# Human-readable labels for the (type, unit) pairs returned by the Z.ai quota
+# API. These match the dashboard's own titles and are used for stdout and JSON
+# output. The API returns numeric unit codes; callers should not depend on the
+# numeric values directly.
+GLM_QUOTA_WINDOW_LABELS = {
+    ('TOKENS_LIMIT', 3): '5 Hours Quota',
+    ('TOKENS_LIMIT', 6): 'Weekly Quota',
+    ('TIME_LIMIT', 5): 'Monthly Web Search / Reader / Zread Quota',
+}
+
 DailyTokens = dict[date, int]
 DailyCosts = dict[date, float]
+
+
+class GlmQuotaUsageDetail(TypedDict, total=False):
+    modelCode: str
+    usage: int
+
+
+class GlmQuotaLimit(TypedDict, total=False):
+    type: str
+    unit: int
+    number: int
+    usage: int
+    currentValue: int
+    remaining: int
+    percentage: int
+    nextResetTime: int
+    usageDetails: list[GlmQuotaUsageDetail]
+
+
+class GlmQuotaSnapshot(TypedDict, total=False):
+    label: str
+    type: str
+    unit: int
+    percentage: int
+    next_reset_time_ms: int | None
+    next_reset_iso: str | None
+    usage: int | None
+    current_value: int | None
+    remaining: int | None
+    usage_details: list[GlmQuotaUsageDetail] | None
 DailyModelTokens = Mapping[date, Mapping[str, dict[str, int]]]
 TimeInterval = tuple[datetime, datetime]
 DailyActiveSeconds = dict[date, float]
@@ -170,6 +217,7 @@ def build_eink_dashboard_payload(
     end_date: str,
     daily_costs: DailyCosts | None = None,
     daily_active_seconds: DailyActiveSeconds | None = None,
+    glm_quota: list[GlmQuotaSnapshot] | None = None,
 ) -> dict[str, object]:
     all_dates = list_dates_in_range(start_date, end_date)
     has_costs = daily_costs is not None
@@ -237,6 +285,8 @@ def build_eink_dashboard_payload(
     }
     if has_costs:
         summary['total_cost_usd'] = round(total_cost_usd, 2)
+    if glm_quota:
+        payload['glm_quota'] = glm_quota
     return payload
 
 
@@ -253,6 +303,7 @@ def write_eink_dashboard_payload(
     daily_costs: DailyCosts | None = None,
     daily_active_seconds: DailyActiveSeconds | None = None,
     output_path: str | None = None,
+    glm_quota: list[GlmQuotaSnapshot] | None = None,
 ) -> dict[str, object]:
     payload = build_eink_dashboard_payload(
         cursor,
@@ -266,6 +317,7 @@ def write_eink_dashboard_payload(
         end_date,
         daily_costs=daily_costs,
         daily_active_seconds=daily_active_seconds,
+        glm_quota=glm_quota,
     )
     target = output_path or os.path.join(SCRIPT_DIR, OUTPUT_EINK_JSON)
     with open(target, 'w') as f:
@@ -509,6 +561,116 @@ def load_glm(path=None):
             continue
         daily[dt.date()] += tokens
     return dict(daily)
+
+
+def export_glm_quota(bearer_token: str) -> dict[str, object]:
+    """Fetch the current Z.ai coding-plan quota snapshot and write glm_quota.json.
+
+    The quota endpoint takes no query parameters; the bearer token identifies
+    the plan. The response is cached verbatim to glm_quota.json next to glm.json
+    so offline runs and tests can reuse it.
+    """
+    headers = {
+        'Authorization': f'Bearer {bearer_token}',
+        'User-Agent': 'Mozilla/5.0',
+        'Accept': 'application/json',
+    }
+    resp = requests.get(GLM_QUOTA_URL, headers=headers)
+    resp.raise_for_status()
+    body = resp.json()
+    if not body.get('success', False):
+        print(f"  GLM quota API warning: {body.get('msg', 'unknown error')}")
+    json_path = os.path.join(SCRIPT_DIR, OUTPUT_GLM_QUOTA_JSON)
+    with open(json_path, 'w') as f:
+        json.dump(body, f, indent=2)
+    return body
+
+
+def _glm_quota_label(limit_type: str, unit: int) -> str:
+    """Return the human-readable window label for a (type, unit) pair.
+
+    Falls back to a generic ``<type> unit=<unit>`` string for unknown codes so
+    new windows added by Z.ai still surface instead of being silently dropped.
+    """
+    return GLM_QUOTA_WINDOW_LABELS.get((limit_type, unit), f'{limit_type} unit={unit}')
+
+
+def _epoch_ms_to_iso(ms: int | None) -> str | None:
+    if ms is None:
+        return None
+    return datetime.fromtimestamp(ms / 1000).isoformat(timespec='seconds')
+
+
+def normalize_glm_quota(body: dict[str, object]) -> list[GlmQuotaSnapshot]:
+    """Convert the raw Z.ai quota/limit response into labeled snapshots.
+
+    Each entry carries a stable ``label``, the raw ``type``/``unit`` codes, the
+    usage percentage, and the next reset time in both epoch-ms and ISO forms.
+    Token limits only report ``percentage``; the monthly tool limit also
+    reports absolute ``usage``/``currentValue``/``remaining`` counts and a
+    per-model ``usage_details`` breakdown.
+    """
+    data = body.get('data')
+    if not isinstance(data, dict):
+        return []
+    limits = data.get('limits')
+    if not isinstance(limits, list):
+        return []
+    snapshots: list[GlmQuotaSnapshot] = []
+    for limit in limits:
+        if not isinstance(limit, dict):
+            continue
+        limit_type = str(limit.get('type', ''))
+        unit = int(limit.get('unit', 0))
+        next_reset_ms = limit.get('nextResetTime')
+        next_reset_ms = int(next_reset_ms) if isinstance(next_reset_ms, (int, float)) else None
+        snapshot: GlmQuotaSnapshot = {
+            'label': _glm_quota_label(limit_type, unit),
+            'type': limit_type,
+            'unit': unit,
+            'percentage': int(limit.get('percentage', 0)),
+            'next_reset_time_ms': next_reset_ms,
+            'next_reset_iso': _epoch_ms_to_iso(next_reset_ms),
+            'usage': int(limit['usage']) if 'usage' in limit and isinstance(limit['usage'], (int, float)) else None,
+            'current_value': int(limit['currentValue']) if 'currentValue' in limit and isinstance(limit['currentValue'], (int, float)) else None,
+            'remaining': int(limit['remaining']) if 'remaining' in limit and isinstance(limit['remaining'], (int, float)) else None,
+            'usage_details': limit.get('usageDetails') if isinstance(limit.get('usageDetails'), list) else None,
+        }
+        snapshots.append(snapshot)
+    return snapshots
+
+
+def load_glm_quota(path: str | None = None) -> list[GlmQuotaSnapshot]:
+    """Load and normalize the cached glm_quota.json, returning [] when absent."""
+    if path is None:
+        path = os.path.join(SCRIPT_DIR, OUTPUT_GLM_QUOTA_JSON)
+    if not os.path.exists(path):
+        return []
+    with open(path) as f:
+        body = json.load(f)
+    return normalize_glm_quota(body)
+
+
+def format_glm_quota_block(snapshots: list[GlmQuotaSnapshot]) -> str:
+    """Render the quota snapshot list as a multi-line stdout block.
+
+    The block is appended after the token/cost table. Each line shows the window
+    label, used percentage, and the next reset time (ISO, local) when available.
+    """
+    if not snapshots:
+        return ''
+    lines = ['\nGLM / Z.ai Coding Plan Quota:']
+    for s in snapshots:
+        pct = s.get('percentage', 0)
+        reset_iso = s.get('next_reset_iso')
+        reset_part = f'  resets {reset_iso}' if reset_iso else ''
+        absolute_part = ''
+        remaining = s.get('remaining')
+        usage = s.get('usage')
+        if remaining is not None and usage is not None:
+            absolute_part = f'  used {usage}/{usage + remaining}'
+        lines.append(f"  {s['label']}: {pct}% used{absolute_part}{reset_part}")
+    return '\n'.join(lines)
 
 
 def iter_claude_session_files(project_dirs: list[Path] | None = None):
@@ -1171,7 +1333,7 @@ def generate_dashboard_desktop(cursor, glm, gemini, claude, gpt_opencode, deepse
     print(f"Desktop chart saved to {output_path}")
     plt.close(fig)
 
-def generate_dashboard(cursor, glm, gemini, claude, gpt_opencode, deepseek, other, start_date, end_date, daily_costs=None, daily_active_seconds: DailyActiveSeconds | None = None, *, skip_desktop_chart: bool = False):
+def generate_dashboard(cursor, glm, gemini, claude, gpt_opencode, deepseek, other, start_date, end_date, daily_costs=None, daily_active_seconds: DailyActiveSeconds | None = None, *, skip_desktop_chart: bool = False, glm_quota: list[GlmQuotaSnapshot] | None = None):
     start = datetime.strptime(start_date, '%Y-%m-%d').date()
     end = datetime.strptime(end_date, '%Y-%m-%d').date()
     
@@ -1228,9 +1390,12 @@ def generate_dashboard(cursor, glm, gemini, claude, gpt_opencode, deepseek, othe
     if has_costs:
         print(f"\nEst. Total (API equiv.): ${cost_total:.2f}")
 
+    if glm_quota:
+        print(format_glm_quota_block(glm_quota))
+
     if not skip_desktop_chart:
         generate_dashboard_desktop(cursor, glm, gemini, claude, gpt_opencode, deepseek, other, start_date, end_date, daily_costs, daily_active_seconds)
-    return write_eink_dashboard_payload(cursor, glm, gemini, claude, gpt_opencode, deepseek, other, start_date, end_date, daily_costs, daily_active_seconds)
+    return write_eink_dashboard_payload(cursor, glm, gemini, claude, gpt_opencode, deepseek, other, start_date, end_date, daily_costs, daily_active_seconds, glm_quota=glm_quota)
 
 
 def build_latest_dashboard_payload(days: int = 30, *, no_cost: bool = False, skip_desktop_chart: bool = True) -> dict[str, object]:
@@ -1261,6 +1426,15 @@ def build_latest_dashboard_payload(days: int = 30, *, no_cost: bool = False, ski
         except Exception as e:
             print(f"Failed to export GLM: {e}")
     glm = load_glm()
+
+    glm_quota: list[GlmQuotaSnapshot] = []
+    if glm_token:
+        print("Exporting GLM quota...")
+        try:
+            export_glm_quota(glm_token)
+        except Exception as e:
+            print(f"Failed to export GLM quota: {e}")
+    glm_quota = load_glm_quota()
 
     print("Loading Claude Code data...")
     start_d = datetime.strptime(start_date, '%Y-%m-%d').date()
@@ -1293,7 +1467,7 @@ def build_latest_dashboard_payload(days: int = 30, *, no_cost: bool = False, ski
     daily_costs = compute_daily_costs(start_date, end_date, start_day_ts, next_day_ts, codex, glm) if not no_cost else None
     gpt_combined = merge_daily_tokens(gpt_opencode, codex)
     glm_combined = merge_daily_tokens(glm, glm_opencode)
-    return generate_dashboard(cursor, glm_combined, gemini, dict(claude_combined), gpt_combined, opencode_deepseek, opencode_other, start_date, end_date, daily_costs, daily_active_seconds=daily_active_seconds, skip_desktop_chart=skip_desktop_chart)
+    return generate_dashboard(cursor, glm_combined, gemini, dict(claude_combined), gpt_combined, opencode_deepseek, opencode_other, start_date, end_date, daily_costs, daily_active_seconds=daily_active_seconds, skip_desktop_chart=skip_desktop_chart, glm_quota=glm_quota)
 
 def main():
     args = parse_args()

@@ -156,6 +156,72 @@ The bottom chart uses one bar per day in V1.
 
 ### Optional V2
 
-- Idle gap splitting.
+- Idle-gap splitting.
 - Daily window counts and longest window.
 - Source-level active time breakdown.
+
+## Appendix B: GLM / Z.ai Coding Plan Quota
+
+### Background
+
+`auto_usage.py` already exports GLM/Z.ai token usage via the
+`/api/monitor/usage/model-usage` endpoint. The Z.ai web dashboard also exposes a
+quota view (`/manage-apikey/coding-plan/personal/usage`) that shows how much of
+each rolling quota window has been consumed and when it resets. That view is
+powered by a separate JSON endpoint:
+
+```text
+GET https://api.z.ai/api/monitor/usage/quota/limit
+Authorization: Bearer <GLM_BEARER_TOKEN>
+```
+
+No query parameters are required; the bearer token identifies the plan. The
+response is a snapshot (not a time series) and reuses the same `GLM_BEARER_TOKEN`
+already configured in `.env`.
+
+### Goals
+
+Add the coding-plan quota snapshot to `auto_usage.py`:
+
+- fetch the snapshot when `GLM_BEARER_TOKEN` is set
+- print a compact quota block after the token/cost table
+- embed the snapshot in the e-ink / dashboard JSON payload under `glm_quota`
+- cache the raw response to `glm_quota.json` for offline reuse
+
+### Quota Windows
+
+The API returns a `limits` array. Each entry has a `(type, unit)` pair that
+maps to a human-readable window label:
+
+| type           | unit | label                                        | fields                                                           |
+|----------------|------|----------------------------------------------|------------------------------------------------------------------|
+| `TOKENS_LIMIT` | 3    | 5 Hours Quota                                | `percentage`, `nextResetTime`                                   |
+| `TOKENS_LIMIT` | 6    | Weekly Quota                                 | `percentage`, `nextResetTime`                                    |
+| `TIME_LIMIT`   | 5    | Monthly Web Search / Reader / Zread Quota    | `usage`, `currentValue`, `remaining`, `percentage`, `nextResetTime`, `usageDetails` |
+
+`nextResetTime` is an epoch-millisecond timestamp. It is converted to a local
+ISO string for display and JSON.
+
+### Non-Goals
+
+- Do not predict future quota consumption.
+- Do not poll the quota endpoint on a schedule; it is fetched once per run.
+- Do not surface the `tool-usage` time series in V1 (it is empty for this plan).
+- Do not parse the Ollama HTML quota page in this phase; GLM is API-driven.
+
+### Success Criteria
+
+- `python auto_usage.py -d 7` prints the quota block when the token is set.
+- The JSON payload contains a `glm_quota` array with labeled snapshots.
+- A missing or expired token degrades gracefully (empty quota block, no crash).
+- Unknown `(type, unit)` pairs are surfaced with a fallback label instead of
+  being silently dropped, so new windows added by Z.ai remain visible.
+
+### Risks And Limits
+
+- The quota endpoint is undocumented and may change shape; the normalizer is
+  defensive and falls back to generic labels for unknown window codes.
+- Reset timestamps are wall-clock values from the API; timezone display follows
+  the local machine.
+- The monthly tool quota reports absolute counts (`usage`/`remaining`) while the
+  token quotas report only a `percentage`; the display reflects that asymmetry.
