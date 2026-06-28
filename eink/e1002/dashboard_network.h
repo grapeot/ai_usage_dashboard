@@ -28,6 +28,25 @@ inline const char* wifiStatusLabel(wl_status_t status) {
   }
 }
 
+inline String httpErrorDetail(HTTPClient& http, const char* operation, const char* url, int httpCode) {
+  String detail = String(operation) + " failed code=" + httpCode;
+  if (httpCode < 0) {
+    detail += " ";
+    detail += http.errorToString(httpCode);
+  }
+  detail += " url=";
+  detail += url;
+  detail += " wifi=";
+  detail += wifiStatusLabel(WiFi.status());
+  if (WiFi.status() == WL_CONNECTED) {
+    detail += " ip=";
+    detail += WiFi.localIP().toString();
+    detail += " rssi=";
+    detail += WiFi.RSSI();
+  }
+  return detail;
+}
+
 inline bool connectWifi(const char* ssid, const char* password, uint32_t wifiTimeoutMs, String* errorDetail = nullptr) {
   WiFi.mode(WIFI_STA);
   WiFi.disconnect(true, true);
@@ -157,8 +176,8 @@ inline bool fetchCachedDashboardData(DashboardData& data, String& errorMessage, 
   Serial.printf("[json] GET %s\n", cachedUrl);
   int httpCode = http.GET();
   if (httpCode != HTTP_CODE_OK) {
-    errorMessage = "HTTP cached " + String(httpCode);
-    Serial.printf("[json] cached http error=%d\n", httpCode);
+    errorMessage = httpErrorDetail(http, "HTTP cached GET", cachedUrl, httpCode);
+    Serial.printf("[json] cached http error=%s\n", errorMessage.c_str());
     http.end();
     return false;
   }
@@ -198,8 +217,8 @@ inline bool fetchDashboardData(DashboardData& data,
   Serial.printf("[json] POST %s reason=%s\n", updateUrl, reason);
   int httpCode = http.POST(requestBody);
   if (httpCode != HTTP_CODE_OK) {
-    errorMessage = "HTTP " + String(httpCode);
-    Serial.printf("[json] http error=%d\n", httpCode);
+    errorMessage = httpErrorDetail(http, "HTTP update POST", updateUrl, httpCode);
+    Serial.printf("[json] http error=%s\n", errorMessage.c_str());
     http.end();
     Serial.println("[json] falling back to cached GET");
     return fetchCachedDashboardData(data, errorMessage, cachedUrl, httpTimeoutMs);
