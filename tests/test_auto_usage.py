@@ -44,16 +44,16 @@ def test_classify_opencode_bucket_poe_anthropic_model_maps_to_anthropic():
     assert classify_opencode_bucket('poe', 'anthropic/claude-sonnet-4.6') == 'anthropic'
 
 
-def test_classify_opencode_bucket_google_provider_stays_other():
-    assert classify_opencode_bucket('google', 'antigravity-gemini-3-flash') == 'opencode_other'
+def test_classify_opencode_bucket_google_provider_maps_to_gemini():
+    assert classify_opencode_bucket('google', 'antigravity-gemini-3-flash') == 'gemini'
 
 
-def test_classify_opencode_bucket_gemini_provider_stays_other():
-    assert classify_opencode_bucket('google', 'gemini-3.1-pro-preview') == 'opencode_other'
+def test_classify_opencode_bucket_gemini_provider_maps_to_gemini():
+    assert classify_opencode_bucket('google', 'gemini-3.1-pro-preview') == 'gemini'
 
 
-def test_classify_opencode_bucket_gemini_model_stays_other():
-    assert classify_opencode_bucket('custom-provider', 'gemini-3-flash-preview') == 'opencode_other'
+def test_classify_opencode_bucket_gemini_model_maps_to_gemini():
+    assert classify_opencode_bucket('custom-provider', 'gemini-3-flash-preview') == 'gemini'
 
 
 def test_classify_opencode_bucket_deepseek_provider_maps_to_deepseek():
@@ -84,8 +84,8 @@ def test_classify_opencode_bucket_xai_provider_maps_to_other():
     assert classify_opencode_bucket('xai', 'custom-model') == 'opencode_other'
 
 
-def test_classify_opencode_bucket_poe_google_model_stays_other():
-    assert classify_opencode_bucket('poe', 'google/gemini-3.1-pro-preview') == 'opencode_other'
+def test_classify_opencode_bucket_poe_google_model_maps_to_gemini():
+    assert classify_opencode_bucket('poe', 'google/gemini-3.1-pro-preview') == 'gemini'
 
 
 def test_classify_opencode_bucket_poe_xai_model_stays_other():
@@ -220,6 +220,7 @@ def test_generate_dashboard_keeps_est_cost_column_when_daily_costs_is_empty_dict
     generate_dashboard(
         cursor={},
         glm={},
+        gemini={},
         claude={},
         gpt_opencode={date(2026, 3, 12): 100},
         deepseek={},
@@ -251,6 +252,7 @@ def test_build_eink_dashboard_payload_emits_minimal_device_friendly_shape():
     payload = build_eink_dashboard_payload(
         cursor={date(2026, 3, 12): 10},
         glm={},
+        gemini={date(2026, 3, 12): 5},
         claude={date(2026, 3, 12): 20},
         gpt_opencode={date(2026, 3, 12): 100},
         deepseek={},
@@ -268,12 +270,13 @@ def test_build_eink_dashboard_payload_emits_minimal_device_friendly_shape():
     assert meta['start_date'] == '2026-03-12'
     assert meta['end_date'] == '2026-03-13'
     assert meta['days'] == 2
-    assert summary['total_tokens'] == 130
+    assert summary['total_tokens'] == 135
     assert summary['total_ai_hours'] == 2.0
     assert summary['total_cost_usd'] == 1.23
     assert summary['categories'] == {
         'cursor': 10,
         'glm': 0,
+        'gemini': 5,
         'claude': 20,
         'gpt_opencode': 100,
         'deepseek': 0,
@@ -285,12 +288,13 @@ def test_build_eink_dashboard_payload_emits_minimal_device_friendly_shape():
         'categories': {
             'cursor': 10,
             'glm': 0,
+            'gemini': 5,
             'claude': 20,
             'gpt_opencode': 100,
             'deepseek': 0,
             'other': 0,
         },
-        'total_tokens': 130,
+        'total_tokens': 135,
         'ai_hours': 1.5,
         'cost_usd': 1.23,
     }
@@ -668,6 +672,7 @@ def test_load_opencode_from_db_returns_empty_when_db_missing(monkeypatch, tmp_pa
     assert load_opencode_from_db() == {
         'anthropic': {},
         'gpt_opencode': {},
+        'gemini': {},
         'deepseek': {},
         'opencode_other': {},
     }

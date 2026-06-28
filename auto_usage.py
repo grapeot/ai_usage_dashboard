@@ -92,6 +92,8 @@ def classify_opencode_bucket(provider_id: str, model_id: str, exclude_glm: bool 
 
     if exclude_glm and (provider_lower in GLM_PROVIDERS or model_lower.startswith(GLM_MODEL_PREFIXES)):
         return None
+    if 'google' in provider_lower or model_lower.startswith('google/') or 'gemini' in model_lower:
+        return 'gemini'
     if 'anthropic' in provider_lower or model_lower.startswith('anthropic/'):
         return 'anthropic'
     if provider_lower == 'openai' or model_lower.startswith('gpt-'):
@@ -156,6 +158,7 @@ def merge_daily_tokens(*sources: DailyTokens) -> DailyTokens:
 def build_eink_dashboard_payload(
     cursor: DailyTokens,
     glm: DailyTokens,
+    gemini: DailyTokens,
     claude: DailyTokens,
     gpt_opencode: DailyTokens,
     deepseek: DailyTokens,
@@ -172,6 +175,7 @@ def build_eink_dashboard_payload(
     summary_totals = {
         'cursor': 0,
         'glm': 0,
+        'gemini': 0,
         'claude': 0,
         'gpt_opencode': 0,
         'deepseek': 0,
@@ -185,6 +189,7 @@ def build_eink_dashboard_payload(
         categories = {
             'cursor': cursor.get(current_date, 0),
             'glm': glm.get(current_date, 0),
+            'gemini': gemini.get(current_date, 0),
             'claude': claude.get(current_date, 0),
             'gpt_opencode': gpt_opencode.get(current_date, 0),
             'deepseek': deepseek.get(current_date, 0),
@@ -235,6 +240,7 @@ def build_eink_dashboard_payload(
 def write_eink_dashboard_payload(
     cursor: DailyTokens,
     glm: DailyTokens,
+    gemini: DailyTokens,
     claude: DailyTokens,
     gpt_opencode: DailyTokens,
     deepseek: DailyTokens,
@@ -248,6 +254,7 @@ def write_eink_dashboard_payload(
     payload = build_eink_dashboard_payload(
         cursor,
         glm,
+        gemini,
         claude,
         gpt_opencode,
         deepseek,
@@ -642,6 +649,7 @@ def empty_opencode_totals() -> dict[str, DailyTokens]:
     return {
         'anthropic': {},
         'gpt_opencode': {},
+        'gemini': {},
         'deepseek': {},
         'opencode_other': {},
     }
@@ -651,6 +659,7 @@ def load_opencode_from_db(exclude_glm: bool = True, start_ts: int | None = None,
     totals = {
         'anthropic': defaultdict(int),
         'gpt_opencode': defaultdict(int),
+        'gemini': defaultdict(int),
         'deepseek': defaultdict(int),
         'opencode_other': defaultdict(int),
     }
@@ -708,6 +717,7 @@ def load_opencode(exclude_glm: bool = True, start_ts: int | None = None, end_ts:
     totals = {
         'anthropic': defaultdict(int),
         'gpt_opencode': defaultdict(int),
+        'gemini': defaultdict(int),
         'deepseek': defaultdict(int),
         'opencode_other': defaultdict(int),
     }
@@ -1080,17 +1090,17 @@ def compute_daily_costs(start_date: str, end_date: str, start_ts: int, end_ts: i
     return dict(daily_costs)
 
 
-def generate_dashboard_desktop(cursor, glm, claude, gpt_opencode, deepseek, other, start_date, end_date, daily_costs=None, daily_active_seconds: DailyActiveSeconds | None = None):
+def generate_dashboard_desktop(cursor, glm, gemini, claude, gpt_opencode, deepseek, other, start_date, end_date, daily_costs=None, daily_active_seconds: DailyActiveSeconds | None = None):
     start = datetime.strptime(start_date, '%Y-%m-%d').date()
     end = datetime.strptime(end_date, '%Y-%m-%d').date()
     
     all_dates = sorted(
-        set(cursor) | set(glm) | set(claude) | set(gpt_opencode) | set(deepseek) | set(other) | set(daily_active_seconds or {})
+        set(cursor) | set(glm) | set(gemini) | set(claude) | set(gpt_opencode) | set(deepseek) | set(other) | set(daily_active_seconds or {})
     )
     all_dates = [d for d in all_dates if start <= d <= end]
     
     has_costs = daily_costs is not None
-    grand_total = sum(cursor.get(d, 0) + glm.get(d, 0) + claude.get(d, 0) + gpt_opencode.get(d, 0) + deepseek.get(d, 0) + other.get(d, 0) for d in all_dates)
+    grand_total = sum(cursor.get(d, 0) + glm.get(d, 0) + gemini.get(d, 0) + claude.get(d, 0) + gpt_opencode.get(d, 0) + deepseek.get(d, 0) + other.get(d, 0) for d in all_dates)
     cost_total = sum((daily_costs or {}).get(d, 0.0) for d in all_dates) if has_costs else 0.0
     active_hours_total = sum((daily_active_seconds or {}).get(d, 0.0) for d in all_dates) / 3600
 
@@ -1101,6 +1111,7 @@ def generate_dashboard_desktop(cursor, glm, claude, gpt_opencode, deepseek, othe
     PALETTE = {
         'Cursor': '#f97316',
         'GLM': '#22c55e',
+        'Gemini': '#06b6d4',
         'Claude': '#f59e0b',
         'GPT': '#8b5cf6',
         'DeepSeek': '#3b82f6',
@@ -1113,6 +1124,7 @@ def generate_dashboard_desktop(cursor, glm, claude, gpt_opencode, deepseek, othe
     vals = {
         'Cursor': [cursor.get(d.date(), 0) / 1e8 for d in dates],
         'GLM': [glm.get(d.date(), 0) / 1e8 for d in dates],
+        'Gemini': [gemini.get(d.date(), 0) / 1e8 for d in dates],
         'Claude': [claude.get(d.date(), 0) / 1e8 for d in dates],
         'GPT': [gpt_opencode.get(d.date(), 0) / 1e8 for d in dates],
         'DeepSeek': [deepseek.get(d.date(), 0) / 1e8 for d in dates],
@@ -1153,17 +1165,17 @@ def generate_dashboard_desktop(cursor, glm, claude, gpt_opencode, deepseek, othe
     print(f"Desktop chart saved to {output_path}")
     plt.close(fig)
 
-def generate_dashboard(cursor, glm, claude, gpt_opencode, deepseek, other, start_date, end_date, daily_costs=None, daily_active_seconds: DailyActiveSeconds | None = None, *, skip_desktop_chart: bool = False):
+def generate_dashboard(cursor, glm, gemini, claude, gpt_opencode, deepseek, other, start_date, end_date, daily_costs=None, daily_active_seconds: DailyActiveSeconds | None = None, *, skip_desktop_chart: bool = False):
     start = datetime.strptime(start_date, '%Y-%m-%d').date()
     end = datetime.strptime(end_date, '%Y-%m-%d').date()
     
     all_dates = sorted(
-        set(cursor) | set(glm) | set(claude) | set(gpt_opencode) | set(deepseek) | set(other) | set(daily_active_seconds or {})
+        set(cursor) | set(glm) | set(gemini) | set(claude) | set(gpt_opencode) | set(deepseek) | set(other) | set(daily_active_seconds or {})
     )
     all_dates = [d for d in all_dates if start <= d <= end]
     
     has_costs = daily_costs is not None
-    cols = ('Date', 'Cursor', 'GLM', 'Claude', 'GPT', 'DeepSeek', 'Other', 'Total', 'AI Hours')
+    cols = ('Date', 'Cursor', 'GLM', 'Gemini', 'Claude', 'GPT', 'DeepSeek', 'Other', 'Total', 'AI Hours')
     if has_costs:
         cols = cols + ('Est. $',)
     col_width = 12
@@ -1176,17 +1188,18 @@ def generate_dashboard(cursor, glm, claude, gpt_opencode, deepseek, other, start
     for d in all_dates:
         u = cursor.get(d, 0)
         g = glm.get(d, 0)
+        ge = gemini.get(d, 0)
         cl = claude.get(d, 0)
         go = gpt_opencode.get(d, 0)
         ds = deepseek.get(d, 0)
         o = other.get(d, 0)
-        total = u + g + cl + go + ds + o
+        total = u + g + ge + cl + go + ds + o
         grand_total += total
         active_hours = (daily_active_seconds or {}).get(d, 0.0) / 3600
         active_hours_total += active_hours
         cost = daily_costs.get(d, 0.0) if has_costs else 0.0
         cost_total += cost
-        row = f"{d!s:>{col_width}} {u:>{col_width},} {g:>{col_width},} {cl:>{col_width},} {go:>{col_width},} {ds:>{col_width},} {o:>{col_width},} {total:>{col_width},} {active_hours:>{col_width}.2f}"
+        row = f"{d!s:>{col_width}} {u:>{col_width},} {g:>{col_width},} {ge:>{col_width},} {cl:>{col_width},} {go:>{col_width},} {ds:>{col_width},} {o:>{col_width},} {total:>{col_width},} {active_hours:>{col_width}.2f}"
         if has_costs:
             row += f" ${cost:>{col_width - 2}.2f}"
         print(row)
@@ -1195,12 +1208,13 @@ def generate_dashboard(cursor, glm, claude, gpt_opencode, deepseek, other, start
     totals = (
         sum(cursor.get(d, 0) for d in all_dates),
         sum(glm.get(d, 0) for d in all_dates),
+        sum(gemini.get(d, 0) for d in all_dates),
         sum(claude.get(d, 0) for d in all_dates),
         sum(gpt_opencode.get(d, 0) for d in all_dates),
         sum(deepseek.get(d, 0) for d in all_dates),
         sum(other.get(d, 0) for d in all_dates),
     )
-    total_row = f"{'TOTAL':>{col_width}} {totals[0]:>{col_width},} {totals[1]:>{col_width},} {totals[2]:>{col_width},} {totals[3]:>{col_width},} {totals[4]:>{col_width},} {totals[5]:>{col_width},} {grand_total:>{col_width},} {active_hours_total:>{col_width}.2f}"
+    total_row = f"{'TOTAL':>{col_width}} {totals[0]:>{col_width},} {totals[1]:>{col_width},} {totals[2]:>{col_width},} {totals[3]:>{col_width},} {totals[4]:>{col_width},} {totals[5]:>{col_width},} {totals[6]:>{col_width},} {grand_total:>{col_width},} {active_hours_total:>{col_width}.2f}"
     if has_costs:
         total_row += f" ${cost_total:>{col_width - 2}.2f}"
     print(total_row)
@@ -1209,8 +1223,8 @@ def generate_dashboard(cursor, glm, claude, gpt_opencode, deepseek, other, start
         print(f"\nEst. Total (API equiv.): ${cost_total:.2f}")
 
     if not skip_desktop_chart:
-        generate_dashboard_desktop(cursor, glm, claude, gpt_opencode, deepseek, other, start_date, end_date, daily_costs, daily_active_seconds)
-    return write_eink_dashboard_payload(cursor, glm, claude, gpt_opencode, deepseek, other, start_date, end_date, daily_costs, daily_active_seconds)
+        generate_dashboard_desktop(cursor, glm, gemini, claude, gpt_opencode, deepseek, other, start_date, end_date, daily_costs, daily_active_seconds)
+    return write_eink_dashboard_payload(cursor, glm, gemini, claude, gpt_opencode, deepseek, other, start_date, end_date, daily_costs, daily_active_seconds)
 
 
 def build_latest_dashboard_payload(days: int = 30, *, no_cost: bool = False, skip_desktop_chart: bool = True) -> dict[str, object]:
@@ -1250,9 +1264,10 @@ def build_latest_dashboard_payload(days: int = 30, *, no_cost: bool = False, ski
 
     claude_code = load_claude_code(start_date=start_d, end_date=end_d)
 
-    print("Loading OpenCode data (excluding GLM, split: Anthropic / GPT / DeepSeek / other)...")
+    print("Loading OpenCode data (excluding GLM, split: Anthropic / Gemini / GPT / DeepSeek / other)...")
     opencode_data = load_opencode(exclude_glm=True, start_ts=start_day_ts, end_ts=next_day_ts)
     anthropic = opencode_data['anthropic']
+    gemini = opencode_data['gemini']
     gpt_opencode = opencode_data['gpt_opencode']
     opencode_deepseek = opencode_data['deepseek']
     opencode_other = opencode_data['opencode_other']
@@ -1270,7 +1285,7 @@ def build_latest_dashboard_payload(days: int = 30, *, no_cost: bool = False, ski
 
     daily_costs = compute_daily_costs(start_date, end_date, start_day_ts, next_day_ts, codex, glm) if not no_cost else None
     gpt_combined = merge_daily_tokens(gpt_opencode, codex)
-    return generate_dashboard(cursor, glm, dict(claude_combined), gpt_combined, opencode_deepseek, opencode_other, start_date, end_date, daily_costs, daily_active_seconds=daily_active_seconds, skip_desktop_chart=skip_desktop_chart)
+    return generate_dashboard(cursor, glm, gemini, dict(claude_combined), gpt_combined, opencode_deepseek, opencode_other, start_date, end_date, daily_costs, daily_active_seconds=daily_active_seconds, skip_desktop_chart=skip_desktop_chart)
 
 def main():
     args = parse_args()

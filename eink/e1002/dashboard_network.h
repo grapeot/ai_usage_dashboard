@@ -108,6 +108,7 @@ inline bool parseDashboardPayload(const String& payload, DashboardData& data, St
   data.totalAiHours = doc["summary"]["total_ai_hours"] | 0.0;
   data.cursor = doc["summary"]["categories"]["cursor"] | 0ULL;
   data.glm = doc["summary"]["categories"]["glm"] | 0ULL;
+  data.gemini = doc["summary"]["categories"]["gemini"] | 0ULL;
   data.claude = doc["summary"]["categories"]["claude"] | 0ULL;
   data.gpt = doc["summary"]["categories"]["gpt_opencode"] | 0ULL;
   data.deepseek = doc["summary"]["categories"]["deepseek"] | 0ULL;
@@ -124,6 +125,7 @@ inline bool parseDashboardPayload(const String& payload, DashboardData& data, St
     entry.dateLabel = compactDateLabel(rawDate);
     entry.cursor = day["categories"]["cursor"] | 0ULL;
     entry.glm = day["categories"]["glm"] | 0ULL;
+    entry.gemini = day["categories"]["gemini"] | 0ULL;
     entry.claude = day["categories"]["claude"] | 0ULL;
     entry.gpt = day["categories"]["gpt_opencode"] | 0ULL;
     entry.deepseek = day["categories"]["deepseek"] | 0ULL;

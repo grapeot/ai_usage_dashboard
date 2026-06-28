@@ -18,6 +18,7 @@ struct DailyEntry {
   String dateLabel;
   uint64_t cursor;
   uint64_t glm;
+  uint64_t gemini;
   uint64_t claude;
   uint64_t gpt;
   uint64_t deepseek;
@@ -36,6 +37,7 @@ struct DashboardData {
   double totalAiHours;
   uint64_t cursor;
   uint64_t glm;
+  uint64_t gemini;
   uint64_t claude;
   uint64_t gpt;
   uint64_t deepseek;
