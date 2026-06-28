@@ -156,7 +156,13 @@ def compact_date_label(iso_date: str) -> str:
 def compact_reset_label(iso: str) -> str:
     if len(iso) < 16:
         return ""
-    return f"r {iso[5:7]}/{iso[8:10]} {iso[11:16]}"
+    return f"reset @ {iso[5:7]}/{iso[8:10]} {iso[11:16]}"
+
+
+def provider_display_name(provider: str) -> str:
+    if provider == "glm":
+        return "GLM"
+    return provider.capitalize()
 
 
 def provider_color(provider: str) -> tuple[int, int, int]:
@@ -430,10 +436,11 @@ def draw_quota_bar(epaper: EPaperSim, x: int, y: int, w: int, qw: QuotaWindow) -
     if fill_w > 0:
         epaper.fill_rect(x, y, fill_w, bar_h, color)
     epaper.draw_rect(x, y, w, bar_h, TFT_BLACK)
-    epaper.draw_string(x, y + bar_h + 2, f"{qw.provider} {qw.label}")
+    head = f"{provider_display_name(qw.provider)} {qw.label}"
     reset = compact_reset_label(qw.next_reset_iso)
     if reset:
-        epaper.draw_string(x, y + bar_h + 14, reset)
+        head += f", {reset}"
+    epaper.draw_string(x, y + bar_h + 2, head)
 
 
 def draw_quota_panel(epaper: EPaperSim, data: DashboardData, x: int, y: int, w: int) -> None:
@@ -457,11 +464,13 @@ def render_dashboard(data: DashboardData, battery: BatteryStatus, mode: str = SE
 
     k_chart_x = 36
     k_left_width = 524
-    k_quota_x = 570
-    k_quota_w = 210
+    k_quota_x = 585
+    k_quota_w = 195
 
     title = f"{format_millions(window_summary.total_tokens)} tokens | ${window_summary.total_cost_usd:.0f} | {view_mode_label(mode)}"
     epaper.draw_string(margin, 14, title)
+
+    epaper.draw_string(margin, 30, "AI Active Time total: " + format_hours(window_summary.total_ai_hours))
 
     draw_legend_item(epaper, 570, 12, TFT_WHITE, "Cursor", border_only=True)
     draw_legend_item(epaper, 640, 12, TFT_GREEN, "GLM")
@@ -471,14 +480,13 @@ def render_dashboard(data: DashboardData, battery: BatteryStatus, mode: str = SE
     draw_legend_item(epaper, 715, 30, TFT_BLUE, "DeepSeek")
     draw_legend_item(epaper, 715, 48, TFT_BLACK, "Other")
 
-    epaper.draw_string(margin, 62, "AI Active Time total: " + format_hours(window_summary.total_ai_hours))
     epaper.draw_string(610, 456, f"Battery: {battery.percentage}% ({battery.voltage:.2f}V)")
 
-    stacked_rect = ChartRect(k_chart_x, 78, k_left_width, 214)
+    stacked_rect = ChartRect(k_chart_x, 92, k_left_width, 200)
     hours_rect = ChartRect(k_chart_x, 336, k_left_width, 88)
     draw_stacked_chart(epaper, data, stacked_rect, start_index, count, mode)
     draw_hours_chart(epaper, data, hours_rect, start_index, count, mode)
-    draw_quota_panel(epaper, data, k_quota_x, 78, k_quota_w)
+    draw_quota_panel(epaper, data, k_quota_x, 92, k_quota_w)
 
     epaper.draw_string(margin, 456, "Updated: " + data.generated_at + " , " + auto_update_label())
     return epaper
@@ -546,11 +554,16 @@ def main() -> None:
     with open(payload_path) as f:
         payload = json.load(f)
     battery = BatteryStatus(voltage=3.92, percentage=80)
-    epaper = render_from_payload(payload, battery=battery, mode=SEVEN_DAYS)
+    epaper_7d = render_from_payload(payload, battery=battery, mode=SEVEN_DAYS)
+    epaper_30d = render_from_payload(payload, battery=battery, mode=THIRTY_DAYS)
     out_path = os.path.join(script_dir, "tmp", "e1002_simulator_preview.png")
     os.makedirs(os.path.dirname(out_path), exist_ok=True)
-    epaper.save(out_path)
-    print(f"Preview saved to {out_path}")
+    # Stack 7d on top, 30d on bottom into a single image.
+    combined = Image.new("RGB", (SCREEN_WIDTH, SCREEN_HEIGHT * 2), TFT_WHITE)
+    combined.paste(epaper_7d.image, (0, 0))
+    combined.paste(epaper_30d.image, (0, SCREEN_HEIGHT))
+    combined.save(out_path)
+    print(f"Preview saved to {out_path} (7d + 30d stacked)")
 
 
 if __name__ == "__main__":

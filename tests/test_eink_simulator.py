@@ -90,7 +90,7 @@ def test_simulator_provider_color_includes_ollama():
 
 
 def test_simulator_compact_reset_label_formats_iso():
-    assert compact_reset_label('2026-06-28T22:00:00Z') == 'r 06/28 22:00'
+    assert compact_reset_label('2026-06-28T22:00:00Z') == 'reset @ 06/28 22:00'
 
 
 def test_simulator_parse_dashboard_payload_reads_quotas():

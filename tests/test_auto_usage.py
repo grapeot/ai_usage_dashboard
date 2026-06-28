@@ -1038,16 +1038,16 @@ def test_normalize_codex_rate_limits_handles_missing_reset_time():
     assert snapshots[0]['next_reset_iso'] is None
 
 
-def test_glm_quota_to_unified_tags_provider_and_preserves_fields():
+def test_glm_quota_to_unified_tags_provider_and_skips_monthly_tool_quota():
     glm_snapshots = normalize_glm_quota(_GLM_QUOTA_SAMPLE)
 
     unified = glm_quota_to_unified(glm_snapshots)
 
     assert all(s['provider'] == 'glm' for s in unified)
-    assert unified[1]['label'] == '5 Hours Quota'
-    assert unified[1]['percentage'] == 13
-    assert unified[0]['usage'] == 4000
-    assert unified[0]['remaining'] == 4000
+    assert len(unified) == 2
+    assert unified[0]['label'] == '5 Hours Quota'
+    assert unified[0]['percentage'] == 13
+    assert unified[1]['label'] == 'Weekly Quota'
 
 
 def test_format_quotas_block_groups_by_provider():
@@ -1056,9 +1056,9 @@ def test_format_quotas_block_groups_by_provider():
     block = format_quotas_block(quotas)
 
     assert 'AI Usage Quotas:' in block
-    assert 'glm 5 Hours Quota: 13% used' in block
-    assert 'codex 5 Hours: 12% used' in block
-    assert 'codex Weekly: 4% used' in block
+    assert 'GLM 5 Hours Quota: 13% used' in block
+    assert 'Codex 5 Hours: 12% used' in block
+    assert 'Codex Weekly: 4% used' in block
 
 
 def test_format_quotas_block_returns_empty_for_no_snapshots():
