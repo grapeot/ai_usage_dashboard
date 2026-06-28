@@ -40,35 +40,27 @@ def compact_date_label(iso_date: str) -> str:
     return iso_date
 
 
-def compact_reset_label(iso: str, now: datetime | None = None) -> str:
-    """Reset label 'reset in Xd Yh' or 'reset in X.Yh' from a local ISO timestamp.
+def reset_countdown_label(reset_ms: int | None, now_ts: float | None = None) -> str:
+    """Reset countdown label from epoch milliseconds.
 
-    Mirrors the e-ink firmware's compactResetLabel. When days > 0, hours are
-    rounded to integer. When days == 0, hours are shown with one decimal place.
-    Returns '' when the timestamp is too short or already in the past.
+    'reset in Xd Yh' or 'reset in X.Yh'. Returns '' when reset_ms is None or 0.
+    Uses epoch directly to avoid mktime timezone issues.
     """
-    if len(iso) < 16:
+    import time as _time
+    if not reset_ms:
         return ''
-    if now is None:
-        now = datetime.now()
-    try:
-        reset_dt = datetime.fromisoformat(iso.replace('Z', '+00:00'))
-        if reset_dt.tzinfo is not None:
-            reset_dt = reset_dt.astimezone().replace(tzinfo=None)
-    except ValueError:
-        return ''
-    diff = reset_dt - now
-    total_seconds = diff.total_seconds()
-    if total_seconds < 0:
-        total_seconds = 0
-    total_minutes = int(total_seconds // 60)
+    if now_ts is None:
+        now_ts = _time.time()
+    diff_sec = int(reset_ms // 1000) - int(now_ts)
+    if diff_sec < 0:
+        diff_sec = 0
+    total_minutes = int(diff_sec // 60)
     total_hours = total_minutes // 60
     days = total_hours // 24
     hours = total_hours % 24
     if days > 0:
         return f'reset in {days}d {hours}h'
-    precise_hours = total_minutes / 60.0
-    return f'reset in {precise_hours:.1f}h'
+    return f'reset in {total_minutes / 60.0:.1f}h'
 
 
 def provider_display_name(provider: str) -> str:
