@@ -59,7 +59,10 @@ def test_get_token_usage_json_returns_dashboard_shape(monkeypatch):
     response = client.get("/token_usage.json")
 
     assert response.status_code == 200
-    assert sorted(response.json().keys()) == ["daily", "meta", "summary"]
+    body = response.json()
+    assert set(body.keys()) >= {"daily", "meta", "summary"}
+    assert body["summary"]["total_tokens"] == 1
+    assert body["daily"] == []
 
 
 def test_post_update_returns_fresh_dashboard_shape(monkeypatch):
@@ -78,7 +81,11 @@ def test_post_update_returns_fresh_dashboard_shape(monkeypatch):
     )
 
     assert response.status_code == 200
-    assert response.json() == payload
+    body = response.json()
+    assert body["meta"]["generated_at"] == "2026-04-01T10:00:00"
+    assert body["summary"]["total_tokens"] == 42
+    assert body["daily"][0]["date"] == "2026-04-01"
+    assert body["daily"][0]["total_tokens"] == 42
 
 
 def test_get_token_usage_json_falls_back_to_disk_when_refresh_fails(monkeypatch, tmp_path):
@@ -98,7 +105,9 @@ def test_get_token_usage_json_falls_back_to_disk_when_refresh_fails(monkeypatch,
     response = client.get("/token_usage.json")
 
     assert response.status_code == 200
-    assert response.json() == payload
+    body = response.json()
+    assert body["summary"]["total_tokens"] == 5
+    assert body["daily"] == []
 
 
 def test_post_update_returns_cached_payload_when_refresh_fails(monkeypatch):
@@ -117,4 +126,6 @@ def test_post_update_returns_cached_payload_when_refresh_fails(monkeypatch):
     )
 
     assert response.status_code == 200
-    assert response.json() == cached
+    body = response.json()
+    assert body["summary"]["total_tokens"] == 7
+    assert body["daily"] == []

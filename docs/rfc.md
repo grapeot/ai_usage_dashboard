@@ -327,3 +327,72 @@ Add a `live_api`-marked integration test that hits the real endpoint when
 - Do not remove existing token columns or cost estimation.
 - `glm_quota` is optional in the JSON payload; old consumers ignore it.
 - A missing or expired token produces an empty quota block and no crash.
+
+## 13. Pydantic Response Models For The Local API
+
+### 13.1 Overview
+
+The local FastAPI service previously returned `dict[str, Any]`, so `/openapi.json`
+described every response as an opaque `object` with `additionalProperties: true`.
+An AI agent reading the OpenAPI spec could not discover the dashboard shape or
+the meaning of any field. This section defines the Pydantic response models that
+now back the API, making `/openapi.json` self-describing.
+
+### 13.2 Module
+
+`dashboard_models.py` owns the response models. It is the single source of truth
+for the OpenAPI schema. `auto_usage.py` is unchanged and still returns plain
+dicts so the CLI entry point stays dependency-light; the service layer validates
+and serializes through the models.
+
+Models:
+
+- `DashboardMeta`
+- `CategoryTotals`
+- `DashboardSummary`
+- `DailyEntry`
+- `GlmQuotaUsageDetail`
+- `GlmQuotaSnapshot`
+- `DashboardPayload`
+- `HealthResponse`
+- `UpdateRequest`
+
+### 13.3 Field Descriptions
+
+Every field carries a `Field(description=...)` so the generated OpenAPI schema
+documents what each value means. A test (`test_model_fields_carry_descriptions_for_openapi`)
+asserts no model field is missing a description, guarding against silent schema
+erosion.
+
+### 13.4 Backward Compatibility
+
+All payload fields are optional with defaults. A stale or minimal cached
+`token_usage_eink.json` (for example one written by an older version that
+predates `glm_quota`) still validates. The service does not use
+`response_model_exclude_defaults`, so default-valued fields are serialized:
+clients always see the full documented shape, and a minimal cached payload is
+enriched to the full shape rather than rejected.
+
+### 13.5 Code Changes
+
+- `local_display_service.py` imports the models and declares them as
+  `response_model` on `/health`, `/token_usage.json`, and
+  `/api/v1/display/update`. It also sets app-level `title`, `description`, and
+  `version`, and per-route `summary`/`description`.
+- `pyproject.toml` registers `dashboard_models` as a py-module.
+- `tests/test_local_display_service.py` was updated to assert structural fields
+  rather than raw dict equality, since typed response models enrich minimal
+  payloads with defaults.
+- `tests/test_dashboard_models.py` covers full-shape validation, minimal-shape
+  defaults, round-trip serialization, required-field enforcement, and the
+  description-presence guard.
+
+### 13.6 OpenAPI Impact
+
+Before: `GET /token_usage.json` 200 schema was
+`{"additionalProperties": true, "type": "object"}`.
+
+After: it is `{"$ref": "#/components/schemas/DashboardPayload"}` and
+`components/schemas` lists every model with per-field descriptions. An AI agent
+can read the spec and understand `glm_quota[].next_reset_iso`,
+`summary.total_ai_hours`, and every other field without reading source.

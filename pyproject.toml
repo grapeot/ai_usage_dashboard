@@ -29,6 +29,7 @@ markers = [
 py-modules = [
     "auto_usage",
     "codex_usage",
+    "dashboard_models",
     "display_contract",
     "firmware_logic",
     "local_display_service",
