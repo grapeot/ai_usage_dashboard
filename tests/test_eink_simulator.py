@@ -22,7 +22,7 @@ from eink_simulator import (
     parse_dashboard_payload,
     render_dashboard,
     provider_color,
-    compact_reset_label,
+    reset_countdown_label,
     TFT_GREEN,
     TFT_CYAN,
     TFT_YELLOW,
@@ -30,6 +30,8 @@ from eink_simulator import (
 
 
 def _sample_payload():
+    import time
+    now_ms = int(time.time() * 1000)
     return {
         'meta': {'generated_at': '2026-06-28T11:38:22', 'start_date': '2026-06-22', 'end_date': '2026-06-28'},
         'summary': {'total_tokens': 2000000000, 'total_cost_usd': 50.0, 'total_ai_hours': 57.2, 'categories': {
@@ -45,12 +47,12 @@ def _sample_payload():
             for i in range(7)
         ],
         'quotas': [
-            {'provider': 'glm', 'label': '5h', 'percentage': 13, 'next_reset_iso': '2026-06-28T15:00:09'},
-            {'provider': 'glm', 'label': '7d', 'percentage': 43, 'next_reset_iso': '2026-06-30T11:10:31'},
-            {'provider': 'ollama', 'label': '5h', 'percentage': 48, 'next_reset_iso': '2026-06-28T22:00:00Z'},
-            {'provider': 'ollama', 'label': '7d', 'percentage': 48, 'next_reset_iso': '2026-06-29T00:00:00Z'},
-            {'provider': 'codex', 'label': '5h', 'percentage': 12, 'next_reset_iso': '2026-06-18T12:30:12'},
-            {'provider': 'codex', 'label': '7d', 'percentage': 4, 'next_reset_iso': '2026-06-24T15:05:57'},
+            {'provider': 'glm', 'label': '5h', 'percentage': 13, 'next_reset_time_ms': now_ms + 3*3600*1000},
+            {'provider': 'glm', 'label': '7d', 'percentage': 43, 'next_reset_time_ms': now_ms + 2*86400*1000},
+            {'provider': 'ollama', 'label': '5h', 'percentage': 48, 'next_reset_time_ms': now_ms + 5*3600*1000},
+            {'provider': 'ollama', 'label': '7d', 'percentage': 48, 'next_reset_time_ms': now_ms + 3*86400*1000},
+            {'provider': 'codex', 'label': '5h', 'percentage': 12, 'next_reset_time_ms': now_ms + 4*3600*1000},
+            {'provider': 'codex', 'label': '7d', 'percentage': 4, 'next_reset_time_ms': now_ms + 5*86400*1000},
         ],
     }
 
@@ -89,18 +91,18 @@ def test_simulator_provider_color_includes_ollama():
     assert provider_color('codex') == TFT_YELLOW
 
 
-def test_simulator_compact_reset_label_formats_hours():
-    from datetime import datetime
-    now = datetime(2026, 6, 28, 12, 0)
-    reset = datetime(2026, 6, 28, 14, 30)
-    assert compact_reset_label(reset.isoformat(), now) == "reset in 2.5h"
+def test_simulator_reset_countdown_label_formats_hours():
+    import time
+    now = time.time()
+    reset_ms = int((now + 9000) * 1000)  # 2.5 hours
+    assert reset_countdown_label(reset_ms, now) == "reset in 2.5h"
 
 
-def test_simulator_compact_reset_label_formats_days():
-    from datetime import datetime
-    now = datetime(2026, 6, 28, 12, 0)
-    reset = datetime(2026, 7, 1, 15, 0)
-    assert compact_reset_label(reset.isoformat(), now) == "reset in 3d 3h"
+def test_simulator_reset_countdown_label_formats_days():
+    import time
+    now = time.time()
+    reset_ms = int(now * 1000) + (3 * 86400 + 3 * 3600) * 1000  # 3d 3h
+    assert reset_countdown_label(reset_ms, now) == "reset in 3d 3h"
 
 
 def test_simulator_parse_dashboard_payload_reads_quotas():

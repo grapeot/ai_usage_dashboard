@@ -158,7 +158,7 @@ inline void drawQuotaBar(EPaper& epaper, int x, int y, int w, const QuotaWindow&
   epaper.setTextColor(TFT_BLACK, TFT_WHITE);
   epaper.setTextSize(1);
   String head = providerDisplayName(qw.provider) + " " + qw.label;
-  String reset = compactResetLabel(qw.nextResetIso);
+  String reset = resetCountdownLabel(qw.nextResetTimeMs);
   if (reset.length() > 0) {
     head += ", " + reset;
   }

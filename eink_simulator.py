@@ -64,6 +64,7 @@ class QuotaWindow:
     provider: str = ""
     label: str = ""
     percentage: int = 0
+    next_reset_time_ms: int = 0
     next_reset_iso: str = ""
 
 
@@ -153,36 +154,23 @@ def compact_date_label(iso_date: str) -> str:
     return iso_date
 
 
-def compact_reset_label(iso: str, now=None) -> str:
-    """Reset label 'reset in Xd Yh' or 'reset in X.Yh' from a local ISO timestamp.
-
-    Mirrors the e-ink firmware's compactResetLabel. When days > 0, hours are
-    rounded to integer. When days == 0, hours are shown with one decimal place.
-    Returns '' when the timestamp is too short or already in the past.
-    """
-    from datetime import datetime as _dt
-    if len(iso) < 16:
+def reset_countdown_label(reset_ms, now_ts=None) -> str:
+    """Reset countdown from epoch ms. 'reset in Xd Yh' or 'reset in X.Yh'."""
+    import time as _time
+    if not reset_ms:
         return ""
-    if now is None:
-        now = _dt.now()
-    try:
-        reset_dt = _dt.fromisoformat(iso.replace("Z", "+00:00"))
-        if reset_dt.tzinfo is not None:
-            reset_dt = reset_dt.astimezone().replace(tzinfo=None)
-    except ValueError:
-        return ""
-    diff = reset_dt - now
-    total_seconds = diff.total_seconds()
-    if total_seconds < 0:
-        total_seconds = 0
-    total_minutes = int(total_seconds // 60)
+    if now_ts is None:
+        now_ts = _time.time()
+    diff_sec = int(reset_ms // 1000) - int(now_ts)
+    if diff_sec < 0:
+        diff_sec = 0
+    total_minutes = int(diff_sec // 60)
     total_hours = total_minutes // 60
     days = total_hours // 24
     hours = total_hours % 24
     if days > 0:
         return f"reset in {days}d {hours}h"
-    precise_hours = total_minutes / 60.0
-    return f"reset in {precise_hours:.1f}h"
+    return f"reset in {total_minutes / 60.0:.1f}h"
 
 
 def provider_display_name(provider: str) -> str:
@@ -459,7 +447,7 @@ def draw_quota_bar(epaper: EPaperSim, x: int, y: int, w: int, qw: QuotaWindow) -
         epaper.fill_rect(x, y, fill_w, bar_h, color)
     epaper.draw_rect(x, y, w, bar_h, TFT_BLACK)
     head = f"{provider_display_name(qw.provider)} {qw.label}"
-    reset = compact_reset_label(qw.next_reset_iso)
+    reset = reset_countdown_label(qw.next_reset_time_ms)
     if reset:
         head += f", {reset}"
     epaper.draw_string(x, y + bar_h + 2, head)
@@ -560,6 +548,7 @@ def parse_dashboard_payload(payload: dict) -> DashboardData:
             provider=str(q.get("provider", "")),
             label=str(q.get("label", "")),
             percentage=int(q.get("percentage", 0)),
+            next_reset_time_ms=int(q.get("next_reset_time_ms", 0) or 0),
             next_reset_iso=str(q.get("next_reset_iso", "")),
         ))
     return data
