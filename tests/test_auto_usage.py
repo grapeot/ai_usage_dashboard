@@ -18,6 +18,7 @@ from auto_usage import (
     classify_opencode_bucket,
     compute_daily_ai_active_seconds,
     date_to_epoch_ms,
+    export_codex_quota,
     export_cursor,
     format_glm_quota_block,
     format_quotas_block,
@@ -1120,6 +1121,97 @@ def test_load_codex_quota_returns_empty_when_no_sessions(tmp_path, monkeypatch):
     monkeypatch.setattr(Path, 'home', lambda: tmp_path)
 
     assert load_codex_quota() == []
+
+
+# --- Codex wham/usage API ---
+
+_WHAM_USAGE_RESPONSE = {
+    'plan_type': 'pro',
+    'rate_limit': {
+        'allowed': True,
+        'primary_window': {
+            'used_percent': 1.0,
+            'limit_window_seconds': 18000,
+            'reset_after_seconds': 2179,
+            'reset_at': 1782676813,
+        },
+        'secondary_window': {
+            'used_percent': 18.0,
+            'limit_window_seconds': 604800,
+            'reset_after_seconds': 270729,
+            'reset_at': 1782945362,
+        },
+    },
+}
+
+
+def test_export_codex_quota_parses_wham_usage_response(monkeypatch, tmp_path):
+    auth_path = tmp_path / '.codex' / 'auth.json'
+    auth_path.parent.mkdir(parents=True)
+    auth_path.write_text(json.dumps({'tokens': {'access_token': 'fake-token'}}))
+    monkeypatch.setattr(Path, 'home', lambda: tmp_path)
+
+    class FakeResp:
+        def raise_for_status(self): pass
+        def json(self): return _WHAM_USAGE_RESPONSE
+    monkeypatch.setattr('auto_usage.requests.get', lambda *a, **kw: FakeResp())
+
+    snapshots = export_codex_quota()
+
+    assert len(snapshots) == 2
+    assert snapshots[0]['provider'] == 'codex'
+    assert snapshots[0]['label'] == '5h'
+    assert snapshots[0]['percentage'] == 1
+    assert snapshots[0]['next_reset_time_ms'] == 1782676813000
+    assert snapshots[1]['label'] == '7d'
+    assert snapshots[1]['percentage'] == 18
+
+
+def test_export_codex_quota_returns_empty_when_no_auth_json(monkeypatch, tmp_path):
+    monkeypatch.setattr(Path, 'home', lambda: tmp_path)
+    assert export_codex_quota() == []
+
+
+def test_load_codex_quota_prefers_api_over_jsonl(monkeypatch, tmp_path):
+    # Set up auth.json for API path
+    auth_path = tmp_path / '.codex' / 'auth.json'
+    auth_path.parent.mkdir(parents=True)
+    auth_path.write_text(json.dumps({'tokens': {'access_token': 'fake-token'}}))
+    monkeypatch.setattr(Path, 'home', lambda: tmp_path)
+
+    class FakeResp:
+        def raise_for_status(self): pass
+        def json(self): return _WHAM_USAGE_RESPONSE
+    monkeypatch.setattr('auto_usage.requests.get', lambda *a, **kw: FakeResp())
+
+    snapshots = load_codex_quota()
+
+    # API returns 1% / 18%, JSONL would return 12% / 4% — API wins.
+    assert snapshots[0]['percentage'] == 1
+    assert snapshots[1]['percentage'] == 18
+
+
+def test_load_codex_quota_falls_back_to_jsonl_when_api_fails(monkeypatch, tmp_path):
+    codex_root = tmp_path / '.codex'
+    auth_path = codex_root / 'auth.json'
+    auth_path.parent.mkdir(parents=True)
+    auth_path.write_text(json.dumps({'tokens': {'access_token': 'fake-token'}}))
+    sessions = codex_root / 'sessions' / '2026' / '06' / '18'
+    sessions.mkdir(parents=True)
+    sessions.joinpath('rollout-a.jsonl').write_text(
+        '{"timestamp":"2026-06-18T12:30:12Z","type":"event_msg","payload":{"type":"token_count","rate_limits":{"primary":{"used_percent":12.0,"window_minutes":300,"resets_at":1781811012},"secondary":{"used_percent":4.0,"window_minutes":10080,"resets_at":1782338757}}}}\n'
+    )
+    monkeypatch.setattr(Path, 'home', lambda: tmp_path)
+
+    def fake_get(*a, **kw):
+        raise Exception('network error')
+    monkeypatch.setattr('auto_usage.requests.get', fake_get)
+
+    snapshots = load_codex_quota()
+
+    # Falls back to JSONL: 12% / 4%.
+    assert snapshots[0]['percentage'] == 12
+    assert snapshots[1]['percentage'] == 4
 
 
 # --- Ollama quota ---
