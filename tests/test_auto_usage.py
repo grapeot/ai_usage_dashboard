@@ -18,6 +18,7 @@ from auto_usage import (
     classify_opencode_bucket,
     compute_daily_ai_active_seconds,
     date_to_epoch_ms,
+    export_claude_code_quota,
     export_codex_quota,
     export_cursor,
     format_glm_quota_block,
@@ -1296,3 +1297,58 @@ def test_load_ollama_quota_reads_cached_file(tmp_path):
 
 def test_load_ollama_quota_returns_empty_when_file_missing(tmp_path):
     assert load_ollama_quota(str(tmp_path / 'missing.html')) == []
+
+
+# --- Claude Code quota ---
+
+_CLAUDE_USAGE_RESPONSE = {
+    'five_hour': {
+        'utilization': 0.07,
+        'resets_at': '2026-06-28T22:50:00.285042+00:00',
+    },
+    'seven_day': {
+        'utilization': 0.53,
+        'resets_at': '2026-07-05T10:00:00.285070+00:00',
+    },
+}
+
+
+def test_export_claude_code_quota_parses_usage_response(monkeypatch):
+    monkeypatch.setattr('auto_usage._read_claude_code_oauth_token', lambda: 'fake-token')
+
+    class FakeResp:
+        def raise_for_status(self): pass
+        def json(self): return _CLAUDE_USAGE_RESPONSE
+    monkeypatch.setattr('auto_usage.requests.get', lambda *a, **kw: FakeResp())
+
+    snapshots = export_claude_code_quota()
+
+    assert len(snapshots) == 2
+    assert snapshots[0]['provider'] == 'claude'
+    assert snapshots[0]['label'] == '5h'
+    assert snapshots[0]['percentage'] == 7
+    assert snapshots[1]['label'] == '7d'
+    assert snapshots[1]['percentage'] == 53
+    # Reset times converted to local (no +00:00 suffix).
+    assert '+00:00' not in (snapshots[0]['next_reset_iso'] or '')
+    assert '+00:00' not in (snapshots[1]['next_reset_iso'] or '')
+
+
+def test_export_claude_code_quota_returns_empty_when_no_token(monkeypatch):
+    monkeypatch.setattr('auto_usage._read_claude_code_oauth_token', lambda: '')
+    assert export_claude_code_quota() == []
+
+
+def test_export_claude_code_quota_handles_missing_windows(monkeypatch):
+    monkeypatch.setattr('auto_usage._read_claude_code_oauth_token', lambda: 'fake-token')
+
+    class FakeResp:
+        def raise_for_status(self): pass
+        def json(self): return {'five_hour': {'utilization': 0.1}}
+    monkeypatch.setattr('auto_usage.requests.get', lambda *a, **kw: FakeResp())
+
+    snapshots = export_claude_code_quota()
+
+    assert len(snapshots) == 1
+    assert snapshots[0]['label'] == '5h'
+    assert snapshots[0]['percentage'] == 10
