@@ -1128,7 +1128,13 @@ _OLLAMA_HTML_SAMPLE = """
 <div>
   <div class="flex justify-between mb-2">
     <span class="text-sm ">Session usage</span>
-    <span class="text-sm ">47.1% used</span>
+    <span class="text-sm ">
+        47.1% used
+      </span>
+  </div>
+  <div class="relative h-3 overflow-hidden rounded-full bg-neutral-200"
+    data-usage-track
+    aria-label="Session usage 47.1% used">
   </div>
   <div class="text-xs text-neutral-500 mt-1 local-time" data-time="2026-06-28T22:00:00Z">Resets in 3 hours.</div>
 </div>
@@ -1136,6 +1142,10 @@ _OLLAMA_HTML_SAMPLE = """
   <div class="flex justify-between mb-2">
     <span class="text-sm">Weekly usage</span>
     <span class="text-sm ">51.1% used</span>
+  </div>
+  <div class="relative h-3 overflow-hidden rounded-full bg-neutral-200"
+    data-usage-track
+    aria-label="Weekly usage 51.1% used">
   </div>
   <div class="text-xs text-neutral-500 mt-1 local-time" data-time="2026-06-29T00:00:00Z">Resets in 5 hours.</div>
 </div>
@@ -1149,10 +1159,23 @@ def test_normalize_ollama_quota_parses_session_and_weekly():
     assert snapshots[0]['provider'] == 'ollama'
     assert snapshots[0]['label'] == '5h'
     assert snapshots[0]['percentage'] == 47
-    assert snapshots[0]['next_reset_iso'] == '2026-06-28T22:00:00Z'
+    # Reset time converted from UTC to local timezone (no trailing Z).
+    iso = snapshots[0]['next_reset_iso']
+    assert iso is not None
+    assert 'Z' not in iso
     assert snapshots[1]['label'] == '7d'
     assert snapshots[1]['percentage'] == 51
-    assert snapshots[1]['next_reset_iso'] == '2026-06-29T00:00:00Z'
+    assert 'Z' not in (snapshots[1]['next_reset_iso'] or '')
+
+
+def test_normalize_ollama_quota_does_not_double_count_aria_label():
+    """The percentage appears in both a span and an aria-label; only the span counts."""
+    snapshots = normalize_ollama_quota(_OLLAMA_HTML_SAMPLE)
+
+    # 2 windows, not 4 (would be 4 if aria-label duplicates were counted).
+    assert len(snapshots) == 2
+    assert snapshots[0]['percentage'] == 47
+    assert snapshots[1]['percentage'] == 51
 
 
 def test_normalize_ollama_quota_returns_empty_for_empty_html():

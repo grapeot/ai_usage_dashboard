@@ -870,31 +870,37 @@ def normalize_ollama_quota(html: str) -> list[QuotaSnapshot]:
     """Parse the two Ollama usage windows (Session = 5h, Weekly) from HTML.
 
     The page renders each window as a block containing a "<pct>% used" span and
-    a local-time div with data-time="<ISO reset time>". We pair them in
-    document order: the first block is Session (5 Hours), the second is Weekly.
+    a local-time div with data-time="<ISO reset time>". The percentage also
+    appears in an aria-label attribute; we only match the span text (preceded
+    by a tag boundary) to avoid double-counting. Reset times from the HTML are
+    UTC (data-time="...Z"); we convert to local time for display.
     """
     if not html:
         return []
-    pct_re = re.compile(r'([\d.]+)%\s*used', re.IGNORECASE)
+    # Match ">X% used" (span text) but not aria-label="...X% used"
+    pct_re = re.compile(r'>\s*([\d.]+)%\s*used', re.IGNORECASE)
     time_re = re.compile(r'data-time="([^"]+)"')
     percentages = [float(m.group(1)) for m in pct_re.finditer(html)]
     reset_times = [m.group(1) for m in time_re.finditer(html)]
     snapshots: list[QuotaSnapshot] = []
     labels = ['5h', '7d']
     for i, pct in enumerate(percentages[:2]):
-        reset_iso = reset_times[i] if i < len(reset_times) else None
+        reset_iso_raw = reset_times[i] if i < len(reset_times) else None
         reset_ms: int | None = None
-        if reset_iso:
+        reset_iso_local: str | None = None
+        if reset_iso_raw:
             try:
-                reset_ms = int(datetime.fromisoformat(reset_iso.replace('Z', '+00:00')).timestamp() * 1000)
+                utc_dt = datetime.fromisoformat(reset_iso_raw.replace('Z', '+00:00'))
+                reset_ms = int(utc_dt.timestamp() * 1000)
+                reset_iso_local = utc_dt.astimezone().replace(tzinfo=None).isoformat(timespec='minutes')
             except ValueError:
-                reset_iso = None
+                pass
         snapshots.append({
             'provider': 'ollama',
             'label': labels[i] if i < len(labels) else f'Window {i+1}',
             'percentage': int(round(pct)),
             'next_reset_time_ms': reset_ms,
-            'next_reset_iso': reset_iso,
+            'next_reset_iso': reset_iso_local,
         })
     return snapshots
 
