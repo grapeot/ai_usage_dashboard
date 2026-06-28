@@ -328,7 +328,68 @@ Add a `live_api`-marked integration test that hits the real endpoint when
 - `glm_quota` is optional in the JSON payload; old consumers ignore it.
 - A missing or expired token produces an empty quota block and no crash.
 
-## 13. Pydantic Response Models For The Local API
+## 13. Codex Quota (Local JSONL)
+
+### 13.1 Overview
+
+The Codex CLI does not expose an HTTP quota endpoint. It embeds a `rate_limits`
+snapshot in every `token_count` event of its session JSONL
+(`~/.codex/sessions/YYYY/MM/DD/rollout-*.jsonl` and `~/.codex/archived_sessions/`).
+`load_codex_quota()` scans session files newest-first and returns the latest
+`rate_limits` block seen, normalized into the unified `QuotaSnapshot` shape.
+
+### 13.2 Data Model
+
+```python
+QuotaSnapshot = TypedDict(
+    'QuotaSnapshot',
+    {
+        'provider': str,        # 'glm' | 'codex' | 'claude'
+        'label': str,           # '5 Hours', 'Weekly', '5 Hours Quota', ...
+        'percentage': int,      # 0-100
+        'next_reset_time_ms': int | None,
+        'next_reset_iso': str | None,
+        'usage': int | None,    # GLM monthly tool quota only
+        'remaining': int | None,# GLM monthly tool quota only
+    },
+    total=False,
+)
+```
+
+### 13.3 Codex rate_limits Shape
+
+```json
+"rate_limits": {
+  "limit_id": "codex",
+  "primary":   {"used_percent": 12.0, "window_minutes": 300,   "resets_at": 1781811012},
+  "secondary": {"used_percent": 4.0,  "window_minutes": 10080, "resets_at": 1782338757},
+  "credits": null,
+  "plan_type": "pro"
+}
+```
+
+`used_percent` is 0-100 (unlike Claude's 0-1 utilization). `resets_at` is unix
+seconds; converted to epoch-ms and ISO for consistency with GLM. `window_minutes`
+300 = 5 Hours (primary), 10080 = Weekly (secondary); unknown values fall back to
+`"<minutes>m"`.
+
+### 13.4 Unified `quotas` Array
+
+The JSON payload gains a `quotas` array that merges all providers:
+
+```json
+"quotas": [
+  {"provider": "glm", "label": "5 Hours Quota", "percentage": 13, ...},
+  {"provider": "codex", "label": "5 Hours", "percentage": 12, ...}
+]
+```
+
+`glm_quota` is kept as a deprecated backward-compat alias. The e-ink firmware
+and stdout render the unified `quotas` array. Claude Code is not yet wired in;
+its endpoint (`/api/oauth/usage`) is documented in `docs/plan_quota_display.md`
+for a future phase.
+
+## 14. Pydantic Response Models For The Local API
 
 ### 13.1 Overview
 

@@ -10,6 +10,7 @@ from dashboard_models import (
     DashboardPayload,
     GlmQuotaSnapshot,
     HealthResponse,
+    QuotaSnapshot,
     UpdateRequest,
 )
 
@@ -128,6 +129,36 @@ def test_update_request_model_validates_required_fields():
 
 def test_model_fields_carry_descriptions_for_openapi():
     """Every serialized field must have a description so /openapi.json is AI-readable."""
-    for model_cls in (DashboardPayload, GlmQuotaSnapshot, HealthResponse, UpdateRequest):
+    for model_cls in (DashboardPayload, GlmQuotaSnapshot, QuotaSnapshot, HealthResponse, UpdateRequest):
         for name, field in model_cls.model_fields.items():
             assert field.description, f'{model_cls.__name__}.{name} missing description'
+
+
+def test_quota_snapshot_model_validates_codex_shape():
+    snap = QuotaSnapshot.model_validate({
+        'provider': 'codex',
+        'label': '5 Hours',
+        'percentage': 12,
+        'next_reset_time_ms': 1781811012000,
+        'next_reset_iso': '2026-06-18T12:30:12',
+    })
+
+    assert snap.provider == 'codex'
+    assert snap.percentage == 12
+    assert snap.usage is None
+
+
+def test_dashboard_payload_includes_unified_quotas():
+    payload = DashboardPayload.model_validate({
+        'meta': {},
+        'summary': {},
+        'daily': [],
+        'quotas': [
+            {'provider': 'glm', 'label': '5 Hours Quota', 'percentage': 13},
+            {'provider': 'codex', 'label': 'Weekly', 'percentage': 4},
+        ],
+    })
+
+    assert payload.quotas is not None
+    assert len(payload.quotas) == 2
+    assert payload.quotas[1].provider == 'codex'

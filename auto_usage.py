@@ -98,6 +98,28 @@ class GlmQuotaSnapshot(TypedDict, total=False):
     current_value: int | None
     remaining: int | None
     usage_details: list[GlmQuotaUsageDetail] | None
+
+
+# Unified quota snapshot across providers (GLM, Codex, Claude Code).
+# The e-ink firmware and stdout render this single array; the per-provider
+# GLM-only `glm_quota` field is kept as a backward-compat alias.
+class QuotaSnapshot(TypedDict, total=False):
+    provider: str
+    label: str
+    percentage: int
+    next_reset_time_ms: int | None
+    next_reset_iso: str | None
+    usage: int | None
+    remaining: int | None
+
+
+# Codex CLI rate_limits window -> human-readable label. Codex session JSONL
+# embeds `rate_limits` in `token_count` event_msgs with `window_minutes`:
+# 300 = 5-hour primary window, 10080 = 7-day secondary window.
+CODEX_WINDOW_MINUTES_LABELS = {
+    300: '5 Hours',
+    10080: 'Weekly',
+}
 DailyModelTokens = Mapping[date, Mapping[str, dict[str, int]]]
 TimeInterval = tuple[datetime, datetime]
 DailyActiveSeconds = dict[date, float]
@@ -218,6 +240,7 @@ def build_eink_dashboard_payload(
     daily_costs: DailyCosts | None = None,
     daily_active_seconds: DailyActiveSeconds | None = None,
     glm_quota: list[GlmQuotaSnapshot] | None = None,
+    quotas: list[QuotaSnapshot] | None = None,
 ) -> dict[str, object]:
     all_dates = list_dates_in_range(start_date, end_date)
     has_costs = daily_costs is not None
@@ -287,6 +310,8 @@ def build_eink_dashboard_payload(
         summary['total_cost_usd'] = round(total_cost_usd, 2)
     if glm_quota:
         payload['glm_quota'] = glm_quota
+    if quotas:
+        payload['quotas'] = quotas
     return payload
 
 
@@ -304,6 +329,7 @@ def write_eink_dashboard_payload(
     daily_active_seconds: DailyActiveSeconds | None = None,
     output_path: str | None = None,
     glm_quota: list[GlmQuotaSnapshot] | None = None,
+    quotas: list[QuotaSnapshot] | None = None,
 ) -> dict[str, object]:
     payload = build_eink_dashboard_payload(
         cursor,
@@ -318,6 +344,7 @@ def write_eink_dashboard_payload(
         daily_costs=daily_costs,
         daily_active_seconds=daily_active_seconds,
         glm_quota=glm_quota,
+        quotas=quotas,
     )
     target = output_path or os.path.join(SCRIPT_DIR, OUTPUT_EINK_JSON)
     with open(target, 'w') as f:
@@ -670,6 +697,130 @@ def format_glm_quota_block(snapshots: list[GlmQuotaSnapshot]) -> str:
         if remaining is not None and usage is not None:
             absolute_part = f'  used {usage}/{usage + remaining}'
         lines.append(f"  {s['label']}: {pct}% used{absolute_part}{reset_part}")
+    return '\n'.join(lines)
+
+
+def glm_quota_to_unified(snapshots: list[GlmQuotaSnapshot]) -> list[QuotaSnapshot]:
+    """Convert GLM-specific snapshots into the provider-tagged unified shape."""
+    unified: list[QuotaSnapshot] = []
+    for s in snapshots:
+        unified.append({
+            'provider': 'glm',
+            'label': s.get('label', ''),
+            'percentage': s.get('percentage', 0),
+            'next_reset_time_ms': s.get('next_reset_time_ms'),
+            'next_reset_iso': s.get('next_reset_iso'),
+            'usage': s.get('usage'),
+            'remaining': s.get('remaining'),
+        })
+    return unified
+
+
+def _codex_window_label(window_minutes: int | None) -> str:
+    if window_minutes is None:
+        return 'Unknown'
+    return CODEX_WINDOW_MINUTES_LABELS.get(window_minutes, f'{window_minutes}m')
+
+
+def _epoch_s_to_iso(s: int | float | None) -> str | None:
+    if s is None:
+        return None
+    return datetime.fromtimestamp(int(s)).isoformat(timespec='seconds')
+
+
+def normalize_codex_rate_limits(rate_limits: dict[str, object]) -> list[QuotaSnapshot]:
+    """Convert a Codex `rate_limits` block into unified quota snapshots.
+
+    Codex session JSONL embeds `rate_limits` in `token_count` event payloads with
+    `primary` (5h) and `secondary` (7d) windows. `used_percent` is 0-100 and
+    `resets_at` is a unix-seconds timestamp.
+    """
+    snapshots: list[QuotaSnapshot] = []
+    for slot in ('primary', 'secondary'):
+        window = rate_limits.get(slot)
+        if not isinstance(window, dict):
+            continue
+        used = window.get('used_percent')
+        if not isinstance(used, (int, float)):
+            continue
+        resets_at = window.get('resets_at')
+        resets_ms = int(resets_at) * 1000 if isinstance(resets_at, (int, float)) else None
+        snapshots.append({
+            'provider': 'codex',
+            'label': _codex_window_label(window.get('window_minutes')),
+            'percentage': int(round(used)),
+            'next_reset_time_ms': resets_ms,
+            'next_reset_iso': _epoch_s_to_iso(resets_at if isinstance(resets_at, (int, float)) else None),
+        })
+    return snapshots
+
+
+def load_codex_quota(start_date: str | None = None, end_date: str | None = None) -> list[QuotaSnapshot]:
+    """Read the most recent Codex `rate_limits` snapshot from local session JSONL.
+
+    Scans session files newest-first (including archived_sessions) and returns
+    the latest `rate_limits` block seen on a `token_count` event. The Codex CLI
+    does not expose an HTTP quota endpoint; the JSONL is the stable, local-only
+    source. Returns [] when no sessions or no rate_limits blocks are found.
+    """
+    sessions_root = Path.home() / '.codex' / 'sessions'
+    archived_root = Path.home() / '.codex' / 'archived_sessions'
+    roots = [sessions_root, archived_root]
+    files: list[Path] = []
+    for root in roots:
+        if root.exists():
+            files.extend(sorted(root.rglob('*.jsonl'), reverse=True))
+
+    latest_rate_limits: dict[str, object] | None = None
+    latest_time: datetime | None = None
+    for session_file in files:
+        try:
+            with session_file.open() as f:
+                for line in f:
+                    line = line.strip()
+                    if not line or '"token_count"' not in line or '"rate_limits"' not in line:
+                        continue
+                    try:
+                        raw = json.loads(line)
+                    except json.JSONDecodeError:
+                        continue
+                    if raw.get('type') != 'event_msg':
+                        continue
+                    payload = raw.get('payload', {})
+                    if not isinstance(payload, dict) or payload.get('type') != 'token_count':
+                        continue
+                    rate_limits = payload.get('rate_limits')
+                    if not isinstance(rate_limits, dict):
+                        continue
+                    ts = parse_codex_event_time(raw.get('timestamp', ''))
+                    if latest_time is None or ts > latest_time:
+                        latest_time = ts
+                        latest_rate_limits = rate_limits
+        except OSError:
+            continue
+        if latest_rate_limits is not None:
+            break
+
+    if latest_rate_limits is None:
+        return []
+    return normalize_codex_rate_limits(latest_rate_limits)
+
+
+def format_quotas_block(snapshots: list[QuotaSnapshot]) -> str:
+    """Render the unified quota snapshot list as a multi-line stdout block.
+
+    Grouped by provider. Each line shows provider, window label, used
+    percentage, and the next reset time (ISO, local) when available.
+    """
+    if not snapshots:
+        return ''
+    lines = ['\nAI Usage Quotas:']
+    for s in snapshots:
+        provider = s.get('provider', '')
+        pct = s.get('percentage', 0)
+        reset_iso = s.get('next_reset_iso')
+        reset_part = f'  resets {reset_iso}' if reset_iso else ''
+        lines.append(f"  {provider} {s.get('label', '')}: {pct}% used{reset_part}")
     return '\n'.join(lines)
 
 
@@ -1333,7 +1484,7 @@ def generate_dashboard_desktop(cursor, glm, gemini, claude, gpt_opencode, deepse
     print(f"Desktop chart saved to {output_path}")
     plt.close(fig)
 
-def generate_dashboard(cursor, glm, gemini, claude, gpt_opencode, deepseek, other, start_date, end_date, daily_costs=None, daily_active_seconds: DailyActiveSeconds | None = None, *, skip_desktop_chart: bool = False, glm_quota: list[GlmQuotaSnapshot] | None = None):
+def generate_dashboard(cursor, glm, gemini, claude, gpt_opencode, deepseek, other, start_date, end_date, daily_costs=None, daily_active_seconds: DailyActiveSeconds | None = None, *, skip_desktop_chart: bool = False, glm_quota: list[GlmQuotaSnapshot] | None = None, quotas: list[QuotaSnapshot] | None = None):
     start = datetime.strptime(start_date, '%Y-%m-%d').date()
     end = datetime.strptime(end_date, '%Y-%m-%d').date()
     
@@ -1393,9 +1544,12 @@ def generate_dashboard(cursor, glm, gemini, claude, gpt_opencode, deepseek, othe
     if glm_quota:
         print(format_glm_quota_block(glm_quota))
 
+    if quotas:
+        print(format_quotas_block(quotas))
+
     if not skip_desktop_chart:
         generate_dashboard_desktop(cursor, glm, gemini, claude, gpt_opencode, deepseek, other, start_date, end_date, daily_costs, daily_active_seconds)
-    return write_eink_dashboard_payload(cursor, glm, gemini, claude, gpt_opencode, deepseek, other, start_date, end_date, daily_costs, daily_active_seconds, glm_quota=glm_quota)
+    return write_eink_dashboard_payload(cursor, glm, gemini, claude, gpt_opencode, deepseek, other, start_date, end_date, daily_costs, daily_active_seconds, glm_quota=glm_quota, quotas=quotas)
 
 
 def build_latest_dashboard_payload(days: int = 30, *, no_cost: bool = False, skip_desktop_chart: bool = True) -> dict[str, object]:
@@ -1436,6 +1590,11 @@ def build_latest_dashboard_payload(days: int = 30, *, no_cost: bool = False, ski
             print(f"Failed to export GLM quota: {e}")
     glm_quota = load_glm_quota()
 
+    print("Loading Codex quota from local session JSONL...")
+    codex_quota = load_codex_quota()
+
+    quotas = glm_quota_to_unified(glm_quota) + codex_quota
+
     print("Loading Claude Code data...")
     start_d = datetime.strptime(start_date, '%Y-%m-%d').date()
     end_d = datetime.strptime(end_date, '%Y-%m-%d').date()
@@ -1467,7 +1626,7 @@ def build_latest_dashboard_payload(days: int = 30, *, no_cost: bool = False, ski
     daily_costs = compute_daily_costs(start_date, end_date, start_day_ts, next_day_ts, codex, glm) if not no_cost else None
     gpt_combined = merge_daily_tokens(gpt_opencode, codex)
     glm_combined = merge_daily_tokens(glm, glm_opencode)
-    return generate_dashboard(cursor, glm_combined, gemini, dict(claude_combined), gpt_combined, opencode_deepseek, opencode_other, start_date, end_date, daily_costs, daily_active_seconds=daily_active_seconds, skip_desktop_chart=skip_desktop_chart, glm_quota=glm_quota)
+    return generate_dashboard(cursor, glm_combined, gemini, dict(claude_combined), gpt_combined, opencode_deepseek, opencode_other, start_date, end_date, daily_costs, daily_active_seconds=daily_active_seconds, skip_desktop_chart=skip_desktop_chart, glm_quota=glm_quota, quotas=quotas)
 
 def main():
     args = parse_args()
