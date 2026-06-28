@@ -44,8 +44,9 @@ CLAUDE_PROJECT_DIRS = [
 
 GLM_PROVIDERS = ('zai-coding-plan', 'zai-coding-plan/glm-4.7')
 # GLM models routed through non-Z.ai providers (e.g. ollama-cloud/glm-5.2)
-# are also GLM and must be excluded from OpenCode buckets so they are not
-# double-counted against the GLM/Z.ai usage API totals.
+# are counted in the OpenCode GLM bucket because the Z.ai usage API does not
+# see them. Only zai-coding-plan GLM is excluded to avoid double-counting
+# against the GLM/Z.ai usage API totals.
 GLM_MODEL_PREFIXES = ('glm-',)
 
 DailyTokens = dict[date, int]
@@ -90,8 +91,10 @@ def classify_opencode_bucket(provider_id: str, model_id: str, exclude_glm: bool 
     provider_lower = (provider_id or '').lower()
     model_lower = (model_id or '').lower()
 
-    if exclude_glm and (provider_lower in GLM_PROVIDERS or model_lower.startswith(GLM_MODEL_PREFIXES)):
+    if exclude_glm and (provider_lower in GLM_PROVIDERS or model_lower.startswith('zai-coding-plan/')):
         return None
+    if model_lower.startswith(GLM_MODEL_PREFIXES):
+        return 'glm_opencode'
     if 'google' in provider_lower or model_lower.startswith('google/') or 'gemini' in model_lower:
         return 'gemini'
     if 'anthropic' in provider_lower or model_lower.startswith('anthropic/'):
@@ -650,6 +653,7 @@ def empty_opencode_totals() -> dict[str, DailyTokens]:
         'anthropic': {},
         'gpt_opencode': {},
         'gemini': {},
+        'glm_opencode': {},
         'deepseek': {},
         'opencode_other': {},
     }
@@ -660,6 +664,7 @@ def load_opencode_from_db(exclude_glm: bool = True, start_ts: int | None = None,
         'anthropic': defaultdict(int),
         'gpt_opencode': defaultdict(int),
         'gemini': defaultdict(int),
+        'glm_opencode': defaultdict(int),
         'deepseek': defaultdict(int),
         'opencode_other': defaultdict(int),
     }
@@ -718,6 +723,7 @@ def load_opencode(exclude_glm: bool = True, start_ts: int | None = None, end_ts:
         'anthropic': defaultdict(int),
         'gpt_opencode': defaultdict(int),
         'gemini': defaultdict(int),
+        'glm_opencode': defaultdict(int),
         'deepseek': defaultdict(int),
         'opencode_other': defaultdict(int),
     }
@@ -1264,10 +1270,11 @@ def build_latest_dashboard_payload(days: int = 30, *, no_cost: bool = False, ski
 
     claude_code = load_claude_code(start_date=start_d, end_date=end_d)
 
-    print("Loading OpenCode data (excluding GLM, split: Anthropic / Gemini / GPT / DeepSeek / other)...")
+    print("Loading OpenCode data (excluding zai-coding-plan GLM, split: Anthropic / Gemini / GLM / GPT / DeepSeek / other)...")
     opencode_data = load_opencode(exclude_glm=True, start_ts=start_day_ts, end_ts=next_day_ts)
     anthropic = opencode_data['anthropic']
     gemini = opencode_data['gemini']
+    glm_opencode = opencode_data['glm_opencode']
     gpt_opencode = opencode_data['gpt_opencode']
     opencode_deepseek = opencode_data['deepseek']
     opencode_other = opencode_data['opencode_other']
@@ -1285,7 +1292,8 @@ def build_latest_dashboard_payload(days: int = 30, *, no_cost: bool = False, ski
 
     daily_costs = compute_daily_costs(start_date, end_date, start_day_ts, next_day_ts, codex, glm) if not no_cost else None
     gpt_combined = merge_daily_tokens(gpt_opencode, codex)
-    return generate_dashboard(cursor, glm, gemini, dict(claude_combined), gpt_combined, opencode_deepseek, opencode_other, start_date, end_date, daily_costs, daily_active_seconds=daily_active_seconds, skip_desktop_chart=skip_desktop_chart)
+    glm_combined = merge_daily_tokens(glm, glm_opencode)
+    return generate_dashboard(cursor, glm_combined, gemini, dict(claude_combined), gpt_combined, opencode_deepseek, opencode_other, start_date, end_date, daily_costs, daily_active_seconds=daily_active_seconds, skip_desktop_chart=skip_desktop_chart)
 
 def main():
     args = parse_args()
