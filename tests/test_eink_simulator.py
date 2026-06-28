@@ -89,8 +89,18 @@ def test_simulator_provider_color_includes_ollama():
     assert provider_color('codex') == TFT_YELLOW
 
 
-def test_simulator_compact_reset_label_formats_iso():
-    assert compact_reset_label('2026-06-28T22:00:00Z') == 'reset @ 06/28 22:00'
+def test_simulator_compact_reset_label_formats_hours():
+    from datetime import datetime
+    now = datetime(2026, 6, 28, 12, 0)
+    reset = datetime(2026, 6, 28, 14, 30)
+    assert compact_reset_label(reset.isoformat(), now) == "reset in 2.5h"
+
+
+def test_simulator_compact_reset_label_formats_days():
+    from datetime import datetime
+    now = datetime(2026, 6, 28, 12, 0)
+    reset = datetime(2026, 7, 1, 15, 0)
+    assert compact_reset_label(reset.isoformat(), now) == "reset in 3d 3h"
 
 
 def test_simulator_parse_dashboard_payload_reads_quotas():

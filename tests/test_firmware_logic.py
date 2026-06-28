@@ -85,8 +85,25 @@ def test_compact_date_label_keeps_non_iso_text():
     assert compact_date_label("today") == "today"
 
 
-def test_compact_reset_label_shortens_iso_timestamp():
-    assert compact_reset_label("2026-06-28T15:00:09") == "reset @ 06/28 15:00"
+def test_compact_reset_label_formats_hours_with_decimal():
+    from datetime import datetime, timedelta
+    now = datetime(2026, 6, 28, 12, 0)
+    reset = datetime(2026, 6, 28, 14, 30)  # 2.5 hours later
+    assert compact_reset_label(reset.isoformat(), now) == "reset in 2.5h"
+
+
+def test_compact_reset_label_formats_days_and_hours():
+    from datetime import datetime, timedelta
+    now = datetime(2026, 6, 28, 12, 0)
+    reset = datetime(2026, 7, 1, 15, 0)  # ~3 days 3 hours later
+    assert compact_reset_label(reset.isoformat(), now) == "reset in 3d 3h"
+
+
+def test_compact_reset_label_returns_empty_for_past_time():
+    from datetime import datetime
+    now = datetime(2026, 6, 28, 12, 0)
+    reset = datetime(2026, 6, 28, 10, 0)  # 2 hours ago
+    assert compact_reset_label(reset.isoformat(), now) == ""
 
 
 def test_compact_reset_label_returns_empty_for_short_input():
