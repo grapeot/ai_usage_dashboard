@@ -41,15 +41,23 @@ def compact_date_label(iso_date: str) -> str:
 
 
 def compact_reset_label(iso: str) -> str:
-    """Compact reset label 'r MM/DD HH:MM' from a local ISO timestamp.
+    """Reset label 'reset @ MM/DD HH:MM' from a local ISO timestamp.
 
-    Mirrors the e-ink firmware's compactResetLabel so the Python tests and the
-    Arduino sketch stay in lockstep. Returns '' when the timestamp is too short
-    or empty.
+    Mirrors the e-ink firmware's compactResetLabel.
     """
     if len(iso) < 16:
         return ''
-    return f'r {iso[5:7]}/{iso[8:10]} {iso[11:16]}'
+    return f'reset @ {iso[5:7]}/{iso[8:10]} {iso[11:16]}'
+
+
+def provider_display_name(provider: str) -> str:
+    """Normalize provider names for display: GLM all-caps, others title-cased.
+
+    Mirrors the e-ink firmware's providerDisplayName.
+    """
+    if provider == 'glm':
+        return 'GLM'
+    return provider.capitalize()
 
 
 def provider_color(provider: str) -> str:

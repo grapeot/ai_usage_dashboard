@@ -61,9 +61,6 @@ inline void drawStackedChart(EPaper& epaper, const DashboardData& data, const Ch
 
   int gap = mode == ViewMode::ThirtyDays ? 2 : 10;
   int barWidth = (rect.w - (static_cast<int>(count) + 1) * gap) / static_cast<int>(count);
-  if (barWidth < 18) {
-    barWidth = 18;
-  }
   int labelStride = mode == ViewMode::ThirtyDays ? 5 : 1;
 
   for (size_t visibleIndex = 0; visibleIndex < count; ++visibleIndex) {
@@ -120,9 +117,6 @@ inline void drawHoursChart(EPaper& epaper, const DashboardData& data, const Char
 
   int gap = mode == ViewMode::ThirtyDays ? 2 : 10;
   int barWidth = (rect.w - (static_cast<int>(count) + 1) * gap) / static_cast<int>(count);
-  if (barWidth < 18) {
-    barWidth = 18;
-  }
   int labelStride = mode == ViewMode::ThirtyDays ? 5 : 1;
 
   for (size_t visibleIndex = 0; visibleIndex < count; ++visibleIndex) {
@@ -163,12 +157,12 @@ inline void drawQuotaBar(EPaper& epaper, int x, int y, int w, const QuotaWindow&
 
   epaper.setTextColor(TFT_BLACK, TFT_WHITE);
   epaper.setTextSize(1);
-  String head = qw.provider + " " + qw.label;
-  epaper.drawString(head, x, y + barH + 2);
+  String head = providerDisplayName(qw.provider) + " " + qw.label;
   String reset = compactResetLabel(qw.nextResetIso);
   if (reset.length() > 0) {
-    epaper.drawString(reset, x, y + barH + 14);
+    head += ", " + reset;
   }
+  epaper.drawString(head, x, y + barH + 2);
 }
 
 // Draw the right-hand quota panel: a header and one bar per quota window.
@@ -214,15 +208,18 @@ inline void renderDashboard(EPaper& epaper,
   // comfortable 20px right margin on the 800px-wide E1002 screen.
   constexpr int kChartX = 36;
   constexpr int kLeftWidth = 524;
-  constexpr int kQuotaX = 570;
-  constexpr int kQuotaW = 210;
+  constexpr int kQuotaX = 585;
+  constexpr int kQuotaW = 195;
 
   epaper.setTextSize(1);
   char titleBuffer[96];
   snprintf(titleBuffer, sizeof(titleBuffer), "%s tokens | $%.0f | %s", formatMillions(windowSummary.totalTokens).c_str(), windowSummary.totalCostUsd, viewModeLabel(mode));
   epaper.drawString(String(titleBuffer), margin, 14);
 
-  // Keep the legend in the right header zone; quota bars start at y=78.
+  // AI Active Time sits directly under the title, above the chart.
+  epaper.drawString("AI Active Time total: " + formatHours(windowSummary.totalAiHours), margin, 30);
+
+  // Keep the legend in the right header zone; quota bars start at y=92.
   drawLegendItem(epaper, 570, 12, TFT_WHITE, "Cursor", true);
   drawLegendItem(epaper, 640, 12, TFT_GREEN, "GLM");
   drawLegendItem(epaper, 715, 12, TFT_RED, "Claude");
@@ -231,18 +228,16 @@ inline void renderDashboard(EPaper& epaper,
   drawLegendItem(epaper, 715, 30, TFT_BLUE, "DeepSeek");
   drawLegendItem(epaper, 715, 48, TFT_BLACK, "Other");
 
-  epaper.setTextSize(1);
-  epaper.drawString("AI Active Time total: " + formatHours(windowSummary.totalAiHours), margin, 62);
   char batteryBuffer[48];
   snprintf(batteryBuffer, sizeof(batteryBuffer), "Battery: %d%% (%.2fV)", battery.percentage, battery.voltage);
   epaper.drawString(String(batteryBuffer), 610, 456);
 
-  ChartRect stackedRect{kChartX, 78, kLeftWidth, 214};
+  ChartRect stackedRect{kChartX, 92, kLeftWidth, 200};
   ChartRect hoursRect{kChartX, 336, kLeftWidth, 88};
 
   drawStackedChart(epaper, data, stackedRect, startIndex, count, mode);
   drawHoursChart(epaper, data, hoursRect, startIndex, count, mode);
-  drawQuotaPanel(epaper, data, kQuotaX, 78, kQuotaW);
+  drawQuotaPanel(epaper, data, kQuotaX, 92, kQuotaW);
 
   epaper.setTextSize(1);
   epaper.drawString("Updated: " + data.generatedAt + " , " + autoUpdateLabel(), margin, 456);

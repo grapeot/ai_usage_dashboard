@@ -145,13 +145,26 @@ inline uint16_t providerColor(const String& provider) {
   return TFT_BLACK;
 }
 
-// Compact reset label: "r MM/DD HH:MM" from an ISO timestamp, or "" when empty.
+// Normalize provider names for display: GLM all-caps, others title-cased.
+inline String providerDisplayName(const String& provider) {
+  if (provider == "glm") {
+    return "GLM";
+  }
+  if (provider.length() > 0) {
+    String out = provider;
+    out[0] = toupper(out[0]);
+    return out;
+  }
+  return provider;
+}
+
+// Reset label: "reset @ MM/DD HH:MM" from an ISO timestamp, or "" when empty.
 inline String compactResetLabel(const String& iso) {
   if (iso.length() < 16) {
     return "";
   }
-  // ISO local form "YYYY-MM-DDTHH:MM:SS" -> "MM/DD HH:MM"
-  String out = "r ";
+  // ISO local form "YYYY-MM-DDTHH:MM:SS" -> "reset @ MM/DD HH:MM"
+  String out = "reset @ ";
   out += iso.substring(5, 7);
   out += "/";
   out += iso.substring(8, 10);

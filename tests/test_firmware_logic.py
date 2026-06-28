@@ -14,6 +14,7 @@ from firmware_logic import (
     green_button_should_fetch,
     is_within_auto_update_window,
     provider_color,
+    provider_display_name,
     quota_bar_fill_width,
     toggle_view_mode,
     white_button_should_fetch,
@@ -85,12 +86,19 @@ def test_compact_date_label_keeps_non_iso_text():
 
 
 def test_compact_reset_label_shortens_iso_timestamp():
-    assert compact_reset_label("2026-06-28T15:00:09") == "r 06/28 15:00"
+    assert compact_reset_label("2026-06-28T15:00:09") == "reset @ 06/28 15:00"
 
 
 def test_compact_reset_label_returns_empty_for_short_input():
     assert compact_reset_label("") == ""
     assert compact_reset_label("2026-06-28") == ""
+
+
+def test_provider_display_name_normalizes_provider():
+    assert provider_display_name("glm") == "GLM"
+    assert provider_display_name("codex") == "Codex"
+    assert provider_display_name("ollama") == "Ollama"
+    assert provider_display_name("claude") == "Claude"
 
 
 def test_provider_color_maps_known_providers():

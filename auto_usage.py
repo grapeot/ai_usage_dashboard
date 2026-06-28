@@ -62,8 +62,8 @@ OUTPUT_GLM_QUOTA_JSON = 'glm_quota.json'
 # output. The API returns numeric unit codes; callers should not depend on the
 # numeric values directly.
 GLM_QUOTA_WINDOW_LABELS = {
-    ('TOKENS_LIMIT', 3): '5 Hours Quota',
-    ('TOKENS_LIMIT', 6): 'Weekly Quota',
+    ('TOKENS_LIMIT', 3): '5h',
+    ('TOKENS_LIMIT', 6): '7d',
     ('TIME_LIMIT', 5): 'Monthly Web Search / Reader / Zread Quota',
 }
 
@@ -118,8 +118,8 @@ class QuotaSnapshot(TypedDict, total=False):
 # embeds `rate_limits` in `token_count` event_msgs with `window_minutes`:
 # 300 = 5-hour primary window, 10080 = 7-day secondary window.
 CODEX_WINDOW_MINUTES_LABELS = {
-    300: '5 Hours',
-    10080: 'Weekly',
+    300: '5h',
+    10080: '7d',
 }
 DailyModelTokens = Mapping[date, Mapping[str, dict[str, int]]]
 TimeInterval = tuple[datetime, datetime]
@@ -702,9 +702,15 @@ def format_glm_quota_block(snapshots: list[GlmQuotaSnapshot]) -> str:
 
 
 def glm_quota_to_unified(snapshots: list[GlmQuotaSnapshot]) -> list[QuotaSnapshot]:
-    """Convert GLM-specific snapshots into the provider-tagged unified shape."""
+    """Convert GLM-specific snapshots into the provider-tagged unified shape.
+
+    Skips the monthly web-search/reader/zread tool quota (TIME_LIMIT); only the
+    5-hour and weekly token quotas are surfaced in the unified array.
+    """
     unified: list[QuotaSnapshot] = []
     for s in snapshots:
+        if s.get('type') == 'TIME_LIMIT':
+            continue
         unified.append({
             'provider': 'glm',
             'label': s.get('label', ''),
@@ -807,20 +813,27 @@ def load_codex_quota(start_date: str | None = None, end_date: str | None = None)
     return normalize_codex_rate_limits(latest_rate_limits)
 
 
+def _provider_display_name(provider: str) -> str:
+    """Normalize provider names for display: GLM all-caps, others title-cased."""
+    if provider == 'glm':
+        return 'GLM'
+    return provider.capitalize()
+
+
 def format_quotas_block(snapshots: list[QuotaSnapshot]) -> str:
     """Render the unified quota snapshot list as a multi-line stdout block.
 
     Grouped by provider. Each line shows provider, window label, used
-    percentage, and the next reset time (ISO, local) when available.
+    percentage, and 'reset at <ISO>' when available.
     """
     if not snapshots:
         return ''
     lines = ['\nAI Usage Quotas:']
     for s in snapshots:
-        provider = s.get('provider', '')
+        provider = _provider_display_name(s.get('provider', ''))
         pct = s.get('percentage', 0)
         reset_iso = s.get('next_reset_iso')
-        reset_part = f'  resets {reset_iso}' if reset_iso else ''
+        reset_part = f'  reset @ {reset_iso}' if reset_iso else ''
         lines.append(f"  {provider} {s.get('label', '')}: {pct}% used{reset_part}")
     return '\n'.join(lines)
 
@@ -867,7 +880,7 @@ def normalize_ollama_quota(html: str) -> list[QuotaSnapshot]:
     percentages = [float(m.group(1)) for m in pct_re.finditer(html)]
     reset_times = [m.group(1) for m in time_re.finditer(html)]
     snapshots: list[QuotaSnapshot] = []
-    labels = ['5 Hours', 'Weekly']
+    labels = ['5h', '7d']
     for i, pct in enumerate(percentages[:2]):
         reset_iso = reset_times[i] if i < len(reset_times) else None
         reset_ms: int | None = None
