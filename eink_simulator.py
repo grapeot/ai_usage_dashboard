@@ -169,8 +169,8 @@ def provider_color(provider: str) -> tuple[int, int, int]:
     return {
         "glm": TFT_GREEN,
         "codex": TFT_YELLOW,
-        "claude": TFT_RED,
         "ollama": TFT_CYAN,
+        "claude": TFT_RED,
     }.get(provider, TFT_BLACK)
 
 

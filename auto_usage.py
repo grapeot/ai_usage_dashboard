@@ -128,6 +128,11 @@ CODEX_WINDOW_SECONDS_LABELS = {
     604800: '7d',
 }
 CODEEX_WHAM_USAGE_URL = 'https://chatgpt.com/backend-api/wham/usage'
+
+# Claude Code OAuth usage endpoint. The token is stored in the macOS Keychain
+# generic-password item "Claude Code-credentials" (account = username), under
+# the claudeAiOauth.accessToken field. utilization is a float 0-1 (not 0-100).
+CLAUDE_OAUTH_USAGE_URL = 'https://api.anthropic.com/api/oauth/usage'
 DailyModelTokens = Mapping[date, Mapping[str, dict[str, int]]]
 TimeInterval = tuple[datetime, datetime]
 DailyActiveSeconds = dict[date, float]
@@ -982,6 +987,84 @@ def load_ollama_quota(path: str | None = None) -> list[QuotaSnapshot]:
         return normalize_ollama_quota(f.read())
 
 
+def _read_claude_code_oauth_token() -> str:
+    """Read the Claude Code OAuth access token from the macOS Keychain.
+
+    Returns '' when the keychain item is missing or the JSON is malformed.
+    On non-macOS platforms, returns '' (no keychain access).
+    """
+    import subprocess
+    try:
+        result = subprocess.run(
+            ['security', 'find-generic-password', '-s', 'Claude Code-credentials', '-w'],
+            capture_output=True, text=True, timeout=5,
+        )
+        if result.returncode != 0 or not result.stdout.strip():
+            return ''
+        data = json.loads(result.stdout.strip())
+        return data.get('claudeAiOauth', {}).get('accessToken', '')
+    except (subprocess.TimeoutExpired, json.JSONDecodeError, OSError):
+        return ''
+
+
+def _iso_utc_to_local(iso: str | None) -> str | None:
+    """Convert a UTC ISO timestamp to local naive ISO (minutes precision)."""
+    if not iso:
+        return None
+    try:
+        dt = datetime.fromisoformat(iso)
+        return dt.astimezone().replace(tzinfo=None).isoformat(timespec='minutes')
+    except ValueError:
+        return None
+
+
+def _iso_utc_to_epoch_ms(iso: str | None) -> int | None:
+    if not iso:
+        return None
+    try:
+        dt = datetime.fromisoformat(iso)
+        return int(dt.timestamp() * 1000)
+    except ValueError:
+        return None
+
+
+def export_claude_code_quota() -> list[QuotaSnapshot]:
+    """Fetch Claude Code plan quota from the Anthropic OAuth usage endpoint.
+
+    Reads the OAuth token from the macOS Keychain and calls
+    GET https://api.anthropic.com/api/oauth/usage. Returns [] when the token
+    is missing/expired or the API fails. utilization is a float 0-1; converted
+    to 0-100 percentage. Reset times are UTC ISO; converted to local.
+    """
+    token = _read_claude_code_oauth_token()
+    if not token:
+        return []
+    resp = requests.get(CLAUDE_OAUTH_USAGE_URL, headers={
+        'Authorization': f'Bearer {token}',
+        'anthropic-beta': 'oauth-2025-04-20',
+        'Accept': 'application/json',
+    })
+    resp.raise_for_status()
+    body = resp.json()
+    snapshots: list[QuotaSnapshot] = []
+    for key, label in (('five_hour', '5h'), ('seven_day', '7d')):
+        window = body.get(key)
+        if not isinstance(window, dict):
+            continue
+        utilization = window.get('utilization')
+        if not isinstance(utilization, (int, float)):
+            continue
+        resets_iso = window.get('resets_at')
+        snapshots.append({
+            'provider': 'claude',
+            'label': label,
+            'percentage': int(round(utilization * 100)),
+            'next_reset_time_ms': _iso_utc_to_epoch_ms(resets_iso),
+            'next_reset_iso': _iso_utc_to_local(resets_iso),
+        })
+    return snapshots
+
+
 def iter_claude_session_files(project_dirs: list[Path] | None = None):
     roots = project_dirs or CLAUDE_PROJECT_DIRS
     seen: set[Path] = set()
@@ -1757,11 +1840,18 @@ def build_latest_dashboard_payload(days: int = 30, *, no_cost: bool = False, ski
             print(f"Failed to export Ollama quota: {e}")
     ollama_quota = load_ollama_quota()
 
-    print("Loading Codex quota from local session JSONL...")
+    print("Loading Codex quota from wham/usage API...")
     codex_quota = load_codex_quota()
 
-    # Provider order for display: z.ai GLM -> Ollama -> Codex.
-    quotas = glm_quota_to_unified(glm_quota) + ollama_quota + codex_quota
+    print("Loading Claude Code quota from OAuth usage endpoint...")
+    try:
+        claude_quota = export_claude_code_quota()
+    except Exception as e:
+        print(f"Failed to fetch Claude Code quota: {e}")
+        claude_quota = []
+
+    # Provider order for display: z.ai GLM -> Ollama -> Codex -> Claude Code.
+    quotas = glm_quota_to_unified(glm_quota) + ollama_quota + codex_quota + claude_quota
 
     print("Loading Claude Code data...")
     start_d = datetime.strptime(start_date, '%Y-%m-%d').date()
