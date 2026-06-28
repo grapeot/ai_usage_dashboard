@@ -153,7 +153,22 @@ inline bool parseDashboardPayload(const String& payload, DashboardData& data, St
     entry.aiHours = day["ai_hours"] | 0.0;
     entry.costUsd = day["cost_usd"] | 0.0;
   }
-  Serial.printf("[json] loaded dailyCount=%u totalTokens=%llu totalCost=%.2f totalHours=%.2f\n",
+
+  data.quotaCount = 0;
+  JsonArray quotas = doc["quotas"].as<JsonArray>();
+  for (JsonObject q : quotas) {
+    if (data.quotaCount >= kMaxQuotas) {
+      break;
+    }
+    QuotaWindow& qw = data.quotas[data.quotaCount++];
+    qw.provider = q["provider"] | "";
+    qw.label = q["label"] | "";
+    qw.percentage = q["percentage"] | 0;
+    qw.nextResetTimeMs = q["next_reset_time_ms"] | 0ULL;
+    qw.nextResetIso = q["next_reset_iso"] | "";
+  }
+  Serial.printf("[json] loaded quotaCount=%u dailyCount=%u totalTokens=%llu totalCost=%.2f totalHours=%.2f\n",
+                static_cast<unsigned>(data.quotaCount),
                 static_cast<unsigned>(data.dailyCount),
                 static_cast<unsigned long long>(data.totalTokens),
                 data.totalCostUsd,
