@@ -375,8 +375,6 @@ def draw_stacked_chart(epaper: EPaperSim, data: DashboardData, rect: ChartRect, 
         return
     gap = 2 if mode == THIRTY_DAYS else 10
     bar_width = (rect.w - (count + 1) * gap) // count
-    if bar_width < 18:
-        bar_width = 18
     label_stride = 5 if mode == THIRTY_DAYS else 1
     for visible_index in range(count):
         i = start_index + visible_index
@@ -413,8 +411,6 @@ def draw_hours_chart(epaper: EPaperSim, data: DashboardData, rect: ChartRect, st
         return
     gap = 2 if mode == THIRTY_DAYS else 10
     bar_width = (rect.w - (count + 1) * gap) // count
-    if bar_width < 18:
-        bar_width = 18
     label_stride = 5 if mode == THIRTY_DAYS else 1
     for visible_index in range(count):
         i = start_index + visible_index

@@ -806,8 +806,8 @@ def test_normalize_glm_quota_maps_known_windows_to_labels():
     labels = [s['label'] for s in snapshots]
     assert labels == [
         'Monthly Web Search / Reader / Zread Quota',
-        '5 Hours Quota',
-        'Weekly Quota',
+        '5h',
+        '7d',
     ]
 
 
@@ -889,7 +889,7 @@ def test_load_glm_quota_reads_cached_file(tmp_path):
     snapshots = load_glm_quota(str(quota_path))
 
     assert len(snapshots) == 3
-    assert snapshots[1]['label'] == '5 Hours Quota'
+    assert snapshots[1]['label'] == '5h'
 
 
 def test_load_glm_quota_returns_empty_when_file_missing(tmp_path):
@@ -909,8 +909,8 @@ def test_format_glm_quota_block_renders_percentage_and_reset_for_each_window():
     block = format_glm_quota_block(snapshots)
 
     assert 'GLM / Z.ai Coding Plan Quota:' in block
-    assert '5 Hours Quota: 13% used' in block
-    assert 'Weekly Quota: 43% used' in block
+    assert '5h: 13% used' in block
+    assert '7d: 43% used' in block
     assert 'Monthly Web Search / Reader / Zread Quota: 0% used' in block
     assert 'used 4000/8000' in block
     assert 'resets ' in block
@@ -939,7 +939,7 @@ def test_build_eink_dashboard_payload_includes_glm_quota_when_provided():
     assert 'glm_quota' in payload
     quota = cast(list[dict[str, object]], payload['glm_quota'])
     assert len(quota) == 3
-    assert quota[1]['label'] == '5 Hours Quota'
+    assert quota[1]['label'] == '5h'
 
 
 def test_build_eink_dashboard_payload_omits_glm_quota_when_empty():
@@ -980,7 +980,7 @@ def test_generate_dashboard_prints_quota_block(capsys):
 
     out = capsys.readouterr().out
     assert 'GLM / Z.ai Coding Plan Quota:' in out
-    assert '5 Hours Quota: 13% used' in out
+    assert '5h: 13% used' in out
 
 
 # --- Codex quota ---
@@ -999,11 +999,11 @@ def test_normalize_codex_rate_limits_maps_primary_and_secondary():
 
     assert len(snapshots) == 2
     assert snapshots[0]['provider'] == 'codex'
-    assert snapshots[0]['label'] == '5 Hours'
+    assert snapshots[0]['label'] == '5h'
     assert snapshots[0]['percentage'] == 12
     assert snapshots[0]['next_reset_time_ms'] == 1781811012000
     assert snapshots[1]['provider'] == 'codex'
-    assert snapshots[1]['label'] == 'Weekly'
+    assert snapshots[1]['label'] == '7d'
     assert snapshots[1]['percentage'] == 4
 
 
@@ -1013,7 +1013,7 @@ def test_normalize_codex_rate_limits_skips_missing_slots():
     snapshots = normalize_codex_rate_limits(body)
 
     assert len(snapshots) == 1
-    assert snapshots[0]['label'] == '5 Hours'
+    assert snapshots[0]['label'] == '5h'
 
 
 def test_normalize_codex_rate_limits_uses_fallback_label_for_unknown_window():
@@ -1045,9 +1045,9 @@ def test_glm_quota_to_unified_tags_provider_and_skips_monthly_tool_quota():
 
     assert all(s['provider'] == 'glm' for s in unified)
     assert len(unified) == 2
-    assert unified[0]['label'] == '5 Hours Quota'
+    assert unified[0]['label'] == '5h'
     assert unified[0]['percentage'] == 13
-    assert unified[1]['label'] == 'Weekly Quota'
+    assert unified[1]['label'] == '7d'
 
 
 def test_format_quotas_block_groups_by_provider():
@@ -1056,9 +1056,9 @@ def test_format_quotas_block_groups_by_provider():
     block = format_quotas_block(quotas)
 
     assert 'AI Usage Quotas:' in block
-    assert 'GLM 5 Hours Quota: 13% used' in block
-    assert 'Codex 5 Hours: 12% used' in block
-    assert 'Codex Weekly: 4% used' in block
+    assert 'GLM 5h: 13% used' in block
+    assert 'Codex 5h: 12% used' in block
+    assert 'Codex 7d: 4% used' in block
 
 
 def test_format_quotas_block_returns_empty_for_no_snapshots():
@@ -1147,10 +1147,10 @@ def test_normalize_ollama_quota_parses_session_and_weekly():
 
     assert len(snapshots) == 2
     assert snapshots[0]['provider'] == 'ollama'
-    assert snapshots[0]['label'] == '5 Hours'
+    assert snapshots[0]['label'] == '5h'
     assert snapshots[0]['percentage'] == 47
     assert snapshots[0]['next_reset_iso'] == '2026-06-28T22:00:00Z'
-    assert snapshots[1]['label'] == 'Weekly'
+    assert snapshots[1]['label'] == '7d'
     assert snapshots[1]['percentage'] == 51
     assert snapshots[1]['next_reset_iso'] == '2026-06-29T00:00:00Z'
 
@@ -1176,7 +1176,7 @@ def test_load_ollama_quota_reads_cached_file(tmp_path):
     snapshots = load_ollama_quota(str(html_path))
 
     assert len(snapshots) == 2
-    assert snapshots[0]['label'] == '5 Hours'
+    assert snapshots[0]['label'] == '5h'
 
 
 def test_load_ollama_quota_returns_empty_when_file_missing(tmp_path):

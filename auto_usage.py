@@ -62,8 +62,8 @@ OUTPUT_GLM_QUOTA_JSON = 'glm_quota.json'
 # output. The API returns numeric unit codes; callers should not depend on the
 # numeric values directly.
 GLM_QUOTA_WINDOW_LABELS = {
-    ('TOKENS_LIMIT', 3): '5 Hours Quota',
-    ('TOKENS_LIMIT', 6): 'Weekly Quota',
+    ('TOKENS_LIMIT', 3): '5h',
+    ('TOKENS_LIMIT', 6): '7d',
     ('TIME_LIMIT', 5): 'Monthly Web Search / Reader / Zread Quota',
 }
 
@@ -118,8 +118,8 @@ class QuotaSnapshot(TypedDict, total=False):
 # embeds `rate_limits` in `token_count` event_msgs with `window_minutes`:
 # 300 = 5-hour primary window, 10080 = 7-day secondary window.
 CODEX_WINDOW_MINUTES_LABELS = {
-    300: '5 Hours',
-    10080: 'Weekly',
+    300: '5h',
+    10080: '7d',
 }
 DailyModelTokens = Mapping[date, Mapping[str, dict[str, int]]]
 TimeInterval = tuple[datetime, datetime]
@@ -880,7 +880,7 @@ def normalize_ollama_quota(html: str) -> list[QuotaSnapshot]:
     percentages = [float(m.group(1)) for m in pct_re.finditer(html)]
     reset_times = [m.group(1) for m in time_re.finditer(html)]
     snapshots: list[QuotaSnapshot] = []
-    labels = ['5 Hours', 'Weekly']
+    labels = ['5h', '7d']
     for i, pct in enumerate(percentages[:2]):
         reset_iso = reset_times[i] if i < len(reset_times) else None
         reset_ms: int | None = None

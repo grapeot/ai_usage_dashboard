@@ -45,12 +45,12 @@ def _sample_payload():
             for i in range(7)
         ],
         'quotas': [
-            {'provider': 'glm', 'label': '5 Hours Quota', 'percentage': 13, 'next_reset_iso': '2026-06-28T15:00:09'},
-            {'provider': 'glm', 'label': 'Weekly Quota', 'percentage': 43, 'next_reset_iso': '2026-06-30T11:10:31'},
-            {'provider': 'ollama', 'label': '5 Hours', 'percentage': 48, 'next_reset_iso': '2026-06-28T22:00:00Z'},
-            {'provider': 'ollama', 'label': 'Weekly', 'percentage': 48, 'next_reset_iso': '2026-06-29T00:00:00Z'},
-            {'provider': 'codex', 'label': '5 Hours', 'percentage': 12, 'next_reset_iso': '2026-06-18T12:30:12'},
-            {'provider': 'codex', 'label': 'Weekly', 'percentage': 4, 'next_reset_iso': '2026-06-24T15:05:57'},
+            {'provider': 'glm', 'label': '5h', 'percentage': 13, 'next_reset_iso': '2026-06-28T15:00:09'},
+            {'provider': 'glm', 'label': '7d', 'percentage': 43, 'next_reset_iso': '2026-06-30T11:10:31'},
+            {'provider': 'ollama', 'label': '5h', 'percentage': 48, 'next_reset_iso': '2026-06-28T22:00:00Z'},
+            {'provider': 'ollama', 'label': '7d', 'percentage': 48, 'next_reset_iso': '2026-06-29T00:00:00Z'},
+            {'provider': 'codex', 'label': '5h', 'percentage': 12, 'next_reset_iso': '2026-06-18T12:30:12'},
+            {'provider': 'codex', 'label': '7d', 'percentage': 4, 'next_reset_iso': '2026-06-24T15:05:57'},
         ],
     }
 
@@ -98,7 +98,7 @@ def test_simulator_parse_dashboard_payload_reads_quotas():
 
     assert len(data.quotas) == 6
     assert data.quotas[2].provider == 'ollama'
-    assert data.quotas[2].label == '5 Hours'
+    assert data.quotas[2].label == '5h'
 
 
 def test_simulator_epaper_save(tmp_path):

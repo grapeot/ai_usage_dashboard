@@ -61,9 +61,6 @@ inline void drawStackedChart(EPaper& epaper, const DashboardData& data, const Ch
 
   int gap = mode == ViewMode::ThirtyDays ? 2 : 10;
   int barWidth = (rect.w - (static_cast<int>(count) + 1) * gap) / static_cast<int>(count);
-  if (barWidth < 18) {
-    barWidth = 18;
-  }
   int labelStride = mode == ViewMode::ThirtyDays ? 5 : 1;
 
   for (size_t visibleIndex = 0; visibleIndex < count; ++visibleIndex) {
@@ -120,9 +117,6 @@ inline void drawHoursChart(EPaper& epaper, const DashboardData& data, const Char
 
   int gap = mode == ViewMode::ThirtyDays ? 2 : 10;
   int barWidth = (rect.w - (static_cast<int>(count) + 1) * gap) / static_cast<int>(count);
-  if (barWidth < 18) {
-    barWidth = 18;
-  }
   int labelStride = mode == ViewMode::ThirtyDays ? 5 : 1;
 
   for (size_t visibleIndex = 0; visibleIndex < count; ++visibleIndex) {
