@@ -14,6 +14,7 @@ data/
 usage.json
 cursor.csv
 glm.json
+glm_quota.json
 token_usage_dashboard.png
 token_usage_epaper.png
 token_usage_eink.json
