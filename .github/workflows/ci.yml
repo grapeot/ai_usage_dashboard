@@ -1,0 +1,66 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches:
+      - master
+
+jobs:
+  python:
+    name: Python Tests
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v5
+
+      - name: Install dependencies
+        run: |
+          uv venv .venv
+          uv pip install --python .venv/bin/python -e '.[dev]'
+
+      - name: Run tests
+        run: .venv/bin/python -m pytest tests/ -v
+
+      - name: Validate pyproject
+        run: .venv/bin/python -c "import tomllib; tomllib.load(open('pyproject.toml','rb'))"
+
+      - name: Verify private artifacts are ignored
+        run: git check-ignore .env token_usage_eink.json token_usage_dashboard.png usage.json cursor.csv glm.json update.log eink/e1002/secrets.h
+
+      - name: Scan tracked files for private values
+        run: |
+          ! git grep -n -E 'ustcSB626|quantum\.tail63c3c5\.ts\.net|tail63c3c5|shability|192\.168\.|op://|pomail\.net'
+
+  arduino:
+    name: E1002 Arduino Compile
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Arduino CLI
+        uses: arduino/setup-arduino-cli@v2
+
+      - name: Install ESP32 core
+        run: |
+          arduino-cli config init
+          arduino-cli config add board_manager.additional_urls https://raw.githubusercontent.com/espressif/arduino-esp32/gh-pages/package_esp32_index.json
+          arduino-cli core update-index
+          arduino-cli core install esp32:esp32
+
+      - name: Install libraries
+        run: |
+          arduino-cli lib install ArduinoJson
+          arduino-cli lib install "Seeed GFX"
+
+      - name: Compile E1002 sketch
+        run: arduino-cli compile --fqbn esp32:esp32:esp32s3 --build-path tmp/arduino-build eink/e1002/e1002.ino
