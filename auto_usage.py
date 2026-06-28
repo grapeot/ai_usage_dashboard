@@ -121,6 +121,13 @@ CODEX_WINDOW_MINUTES_LABELS = {
     300: '5h',
     10080: '7d',
 }
+# Codex wham/usage API uses limit_window_seconds instead of window_minutes.
+# 18000s = 5h, 604800s = 7d.
+CODEX_WINDOW_SECONDS_LABELS = {
+    18000: '5h',
+    604800: '7d',
+}
+CODEEX_WHAM_USAGE_URL = 'https://chatgpt.com/backend-api/wham/usage'
 DailyModelTokens = Mapping[date, Mapping[str, dict[str, int]]]
 TimeInterval = tuple[datetime, datetime]
 DailyActiveSeconds = dict[date, float]
@@ -729,10 +736,61 @@ def _codex_window_label(window_minutes: int | None) -> str:
     return CODEX_WINDOW_MINUTES_LABELS.get(window_minutes, f'{window_minutes}m')
 
 
+def _codex_window_label_from_seconds(seconds: int | None) -> str:
+    if seconds is None:
+        return 'Unknown'
+    return CODEX_WINDOW_SECONDS_LABELS.get(seconds, f'{seconds}s')
+
+
 def _epoch_s_to_iso(s: int | float | None) -> str | None:
     if s is None:
         return None
     return datetime.fromtimestamp(int(s)).isoformat(timespec='seconds')
+
+
+def export_codex_quota() -> list[QuotaSnapshot]:
+    """Fetch Codex plan quota from the ChatGPT wham/usage API.
+
+    Reads the OAuth access_token from ~/.codex/auth.json and calls
+    GET https://chatgpt.com/backend-api/wham/usage. This reflects the ChatGPT
+    plan Codex quota regardless of whether the user drives Codex via the CLI
+    or via OpenCode (as long as OpenCode uses the ChatGPT OAuth path, not a
+    platform API key). Returns [] when auth.json is missing or the API fails.
+    """
+    auth_path = Path.home() / '.codex' / 'auth.json'
+    if not auth_path.exists():
+        return []
+    with auth_path.open() as f:
+        auth = json.load(f)
+    token = auth.get('tokens', {}).get('access_token', '')
+    if not token:
+        return []
+    resp = requests.get(CODEEX_WHAM_USAGE_URL, headers={
+        'Authorization': f'Bearer {token}',
+        'User-Agent': 'Mozilla/5.0',
+        'Accept': 'application/json',
+    })
+    resp.raise_for_status()
+    body = resp.json()
+    rate_limit = body.get('rate_limit', {})
+    snapshots: list[QuotaSnapshot] = []
+    for slot, label_key in (('primary_window', '5h'), ('secondary_window', '7d')):
+        window = rate_limit.get(slot)
+        if not isinstance(window, dict):
+            continue
+        used = window.get('used_percent')
+        if not isinstance(used, (int, float)):
+            continue
+        resets_at = window.get('reset_at')
+        resets_ms = int(resets_at) * 1000 if isinstance(resets_at, (int, float)) else None
+        snapshots.append({
+            'provider': 'codex',
+            'label': _codex_window_label_from_seconds(window.get('limit_window_seconds')) or label_key,
+            'percentage': int(round(used)),
+            'next_reset_time_ms': resets_ms,
+            'next_reset_iso': _epoch_s_to_iso(resets_at if isinstance(resets_at, (int, float)) else None),
+        })
+    return snapshots
 
 
 def normalize_codex_rate_limits(rate_limits: dict[str, object]) -> list[QuotaSnapshot]:
@@ -763,13 +821,22 @@ def normalize_codex_rate_limits(rate_limits: dict[str, object]) -> list[QuotaSna
 
 
 def load_codex_quota(start_date: str | None = None, end_date: str | None = None) -> list[QuotaSnapshot]:
-    """Read the most recent Codex `rate_limits` snapshot from local session JSONL.
+    """Fetch Codex plan quota, preferring the wham/usage API over local JSONL.
 
-    Scans session files newest-first (including archived_sessions) and returns
-    the latest `rate_limits` block seen on a `token_count` event. The Codex CLI
-    does not expose an HTTP quota endpoint; the JSONL is the stable, local-only
-    source. Returns [] when no sessions or no rate_limits blocks are found.
+    The wham/usage API reflects the ChatGPT plan Codex quota in real time,
+    covering both direct Codex CLI usage and OpenCode→Codex traffic (when using
+    the ChatGPT OAuth path). Falls back to parsing the latest `rate_limits`
+    from local session JSONL when the API is unavailable (no auth.json, network
+    error, or expired token). Returns [] when neither source yields data.
     """
+    try:
+        api_snapshots = export_codex_quota()
+        if api_snapshots:
+            return api_snapshots
+    except Exception as e:
+        print(f"Failed to fetch Codex quota from wham/usage API: {e}")
+
+    # Fallback: parse local session JSONL.
     sessions_root = Path.home() / '.codex' / 'sessions'
     archived_root = Path.home() / '.codex' / 'archived_sessions'
     roots = [sessions_root, archived_root]

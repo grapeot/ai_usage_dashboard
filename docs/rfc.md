@@ -332,11 +332,26 @@ Add a `live_api`-marked integration test that hits the real endpoint when
 
 ### 13.1 Overview
 
-The Codex CLI does not expose an HTTP quota endpoint. It embeds a `rate_limits`
-snapshot in every `token_count` event of its session JSONL
-(`~/.codex/sessions/YYYY/MM/DD/rollout-*.jsonl` and `~/.codex/archived_sessions/`).
-`load_codex_quota()` scans session files newest-first and returns the latest
-`rate_limits` block seen, normalized into the unified `QuotaSnapshot` shape.
+Codex plan quota is fetched from the ChatGPT `wham/usage` API, with local
+session JSONL as a fallback. The primary data source is:
+
+```text
+GET https://chatgpt.com/backend-api/wham/usage
+Authorization: Bearer <access_token from ~/.codex/auth.json>
+```
+
+This reflects the ChatGPT plan Codex quota in real time, covering both direct
+Codex CLI usage and OpenCode→Codex traffic (when OpenCode uses the ChatGPT
+OAuth path, not a platform API key). `export_codex_quota()` reads the OAuth
+token from `~/.codex/auth.json` and parses `rate_limit.primary_window` (5h) and
+`rate_limit.secondary_window` (7d), each with `used_percent` (0-100) and
+`reset_at` (unix seconds).
+
+When the API is unavailable (no `auth.json`, network error, or expired token),
+`load_codex_quota()` falls back to parsing the latest `rate_limits` block from
+`~/.codex/sessions/.../*.jsonl` and `~/.codex/archived_sessions/`. The JSONL
+path only captures direct Codex CLI usage; the API path covers all Codex plan
+usage regardless of client.
 
 ### 13.2 Data Model
 
