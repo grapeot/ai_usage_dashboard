@@ -53,7 +53,7 @@ On boot, the sketch:
 7. enters light sleep and wakes every hour
 
 The screen is split into two zones: the left ~550px shows the stacked token bar
-chart and the AI Active Hours chart; the right ~220px shows a `Quotas` panel with
+chart and the AI Active Hours chart; the right ~210px shows a `Quotas` panel with
 one horizontal usage bar per provider window (GLM 5h/weekly/monthly, Codex
 5h/weekly). Each bar's filled portion uses the provider's palette color (GLM =
 green, Codex = yellow, Claude = red) and the reset time is printed below the bar
@@ -86,7 +86,7 @@ If upload is unstable:
 
 - `secrets.h` contains local Wi-Fi credentials and must not be committed.
 - The title uses a compact format such as `2.54B tokens | $2258` to avoid legend overlap.
-- The dashboard layout is split: left zone (x=36..560) for the token and hours charts, right zone (x=575..795) for the quota panel. The legend is reflowed to fit the left zone.
+- The dashboard layout is split: left zone (x=36..560) for the token and hours charts, right zone (x=570..780) for the quota panel. The legend stays in the right header zone above the quota bars.
 - Startup does not show intermediate status pages; success goes directly to the final visualization.
 - Battery percentage is estimated from `GPIO21 -> GPIO1 ADC` voltage readings and calibration, not from a fuel gauge.
 - Green and white buttons are configured as light-sleep wake sources.

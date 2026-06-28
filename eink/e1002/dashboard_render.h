@@ -210,25 +210,26 @@ inline void renderDashboard(EPaper& epaper,
                 static_cast<unsigned>(data.quotaCount));
 
   // Left zone (charts) occupies x=10..560 (width 550).
-  // Right zone (quota panel) occupies x=575..795 (width 220).
+  // Right zone (quota panel) occupies x=570..780 (width 210), leaving a
+  // comfortable 20px right margin on the 800px-wide E1002 screen.
   constexpr int kChartX = 36;
   constexpr int kLeftWidth = 524;
-  constexpr int kQuotaX = 575;
-  constexpr int kQuotaW = 220;
+  constexpr int kQuotaX = 570;
+  constexpr int kQuotaW = 210;
 
   epaper.setTextSize(1);
   char titleBuffer[96];
   snprintf(titleBuffer, sizeof(titleBuffer), "%s tokens | $%.0f | %s", formatMillions(windowSummary.totalTokens).c_str(), windowSummary.totalCostUsd, viewModeLabel(mode));
   epaper.drawString(String(titleBuffer), margin, 14);
 
-  // Legend is reflowed to fit the left zone.
-  drawLegendItem(epaper, margin, 30, TFT_WHITE, "Cursor", true);
-  drawLegendItem(epaper, margin + 70, 30, TFT_GREEN, "GLM");
-  drawLegendItem(epaper, margin + 140, 30, TFT_RED, "Claude");
-  drawLegendItemStriped(epaper, margin, 46, TFT_WHITE, "Gemini");
-  drawLegendItem(epaper, margin + 70, 46, TFT_YELLOW, "GPT");
-  drawLegendItem(epaper, margin + 140, 46, TFT_BLUE, "DeepSeek");
-  drawLegendItem(epaper, margin + 210, 46, TFT_BLACK, "Other");
+  // Keep the legend in the right header zone; quota bars start at y=78.
+  drawLegendItem(epaper, 570, 12, TFT_WHITE, "Cursor", true);
+  drawLegendItem(epaper, 640, 12, TFT_GREEN, "GLM");
+  drawLegendItem(epaper, 715, 12, TFT_RED, "Claude");
+  drawLegendItemStriped(epaper, 570, 30, TFT_WHITE, "Gemini");
+  drawLegendItem(epaper, 640, 30, TFT_YELLOW, "GPT");
+  drawLegendItem(epaper, 715, 30, TFT_BLUE, "DeepSeek");
+  drawLegendItem(epaper, 715, 48, TFT_BLACK, "Other");
 
   epaper.setTextSize(1);
   epaper.drawString("AI Active Time total: " + formatHours(windowSummary.totalAiHours), margin, 62);

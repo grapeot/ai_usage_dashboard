@@ -31,6 +31,7 @@ py-modules = [
     "codex_usage",
     "dashboard_models",
     "display_contract",
+    "eink_simulator",
     "firmware_logic",
     "local_display_service",
     "opencode_token_analyzer",

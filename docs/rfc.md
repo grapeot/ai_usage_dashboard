@@ -389,7 +389,29 @@ and stdout render the unified `quotas` array. Claude Code is not yet wired in;
 its endpoint (`/api/oauth/usage`) is documented in `docs/plan_quota_display.md`
 for a future phase.
 
-## 14. Pydantic Response Models For The Local API
+## 14. Ollama Quota (HTML Parse)
+
+### 14.1 Overview
+
+Ollama does not expose a JSON API for usage quota. The settings page at
+`https://ollama.com/settings` server-renders two usage bars (Session = 5h,
+Weekly) into the HTML, requiring a browser cookie (cf_clearance + session).
+`export_ollama_quota()` fetches the HTML; `normalize_ollama_quota()` parses the
+percentage from the `X% used` spans and the reset time from the
+`data-time="ISO"` attribute on the local-time div. The two windows are paired
+in document order: Session -> '5 Hours', Weekly -> 'Weekly'.
+
+### 14.2 Data Model
+
+Same `QuotaSnapshot` shape, `provider='ollama'`. `next_reset_iso` is the raw
+UTC ISO string from `data-time`; `next_reset_time_ms` is the epoch-ms form.
+
+### 14.3 Provider Order
+
+`quotas` is assembled in display order: z.ai GLM -> Ollama -> Codex. This
+matches the e-ink firmware's rendering top-to-bottom in the quota panel.
+
+## 15. Pydantic Response Models For The Local API
 
 ### 13.1 Overview
 

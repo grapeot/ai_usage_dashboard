@@ -97,6 +97,7 @@ def test_provider_color_maps_known_providers():
     assert provider_color("glm") == "green"
     assert provider_color("codex") == "yellow"
     assert provider_color("claude") == "red"
+    assert provider_color("ollama") == "cyan"
     assert provider_color("unknown") == "black"
 
 
