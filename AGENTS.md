@@ -2,7 +2,7 @@
 
 ## What This Repo Is
 
-This project aggregates local AI usage data from Codex, Cursor, GLM/Z.ai, Claude Code, and OpenCode. It can print daily token/cost tables, generate a desktop chart, emit an E1002-friendly JSON payload, and serve that payload through a local FastAPI service.
+This project aggregates local AI usage data from Codex, Cursor, GLM/Z.ai, Claude Code, and OpenCode. It can print daily token/cost tables, generate a desktop chart, emit an E1002-friendly JSON payload, and serve that payload through a local FastAPI service. The FastAPI service exposes typed Pydantic response models (`dashboard_models.py`) so `/openapi.json` is self-describing for AI agents.
 
 The repository is being prepared for public GitHub publication. Public files must contain only fake examples, generic paths, and local-only setup instructions.
 

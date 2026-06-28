@@ -70,6 +70,13 @@ GET  /token_usage.json
 POST /api/v1/display/update
 ```
 
+Responses are typed by Pydantic models in `dashboard_models.py`
+(`DashboardPayload`, `DashboardSummary`, `DailyEntry`, `GlmQuotaSnapshot`,
+`HealthResponse`, `UpdateRequest`). Every field carries a description, so
+`/openapi.json` is self-describing for AI agents: the response schema for
+`/token_usage.json` is a `$ref` to `DashboardPayload` rather than an opaque
+object.
+
 `POST /api/v1/display/update` accepts:
 
 ```json
