@@ -366,6 +366,53 @@ for the current day.
 - The `gemini` bucket now includes Antigravity Gemini + OpenCode Gemini +
   any future Gemini sources. This is the intended consolidation.
 
+### 16.13 Quota Display
+
+The LS exposes per-model quota via `GetCascadeModelConfigData`:
+
+```json
+{
+  "clientModelConfigs": [
+    {
+      "label": "Gemini 3.5 Flash (Medium)",
+      "modelOrAlias": {"model": "MODEL_PLACEHOLDER_M20"},
+      "quotaInfo": {
+        "remainingFraction": 0.92,
+        "resetTime": "2026-06-30T00:38:31Z"
+      }
+    }
+  ]
+}
+```
+
+`remainingFraction` is 0-1 (1 = full, 0 = depleted). `resetTime` is ISO UTC.
+Used percentage = `(1 - remainingFraction) * 100`.
+
+Models are grouped by family (Gemini, Claude, GPT) via
+`_antigravity_model_family()`. The highest used percentage per family is
+reported as one `QuotaSnapshot`:
+
+```python
+QuotaSnapshot(
+    provider='antigravity',
+    label='Gemini 5h',
+    percentage=8,
+    next_reset_time_ms=...,
+    next_reset_iso='2026-06-29T17:38',
+)
+```
+
+### 16.14 E-Ink / Simulator Changes
+
+- `firmware_logic.py`: `provider_color('antigravity')` returns `'cyan'` (same
+  as Ollama — both are multi-model platforms).
+- `eink_simulator.py`: `provider_display_name('antigravity')` returns
+  `'Antigravity'`; `provider_color('antigravity')` returns `TFT_CYAN`.
+- No new e-ink categories. The Antigravity quota entries flow through the
+  existing `quotas` array and render as bars in the quota panel.
+- `_MAX_QUOTAS = 12` in the simulator is sufficient for the 9 entries currently
+  produced (2 GLM + 2 Ollama + 2 Codex + 3 Antigravity).
+
 ## 12. GLM / Z.ai Coding Plan Quota
 
 ### 12.1 Overview
