@@ -84,6 +84,7 @@ def provider_color(provider: str) -> str:
         'codex': 'yellow',
         'claude': 'red',
         'ollama': 'cyan',
+        'antigravity': 'cyan',
     }.get(provider, 'black')
 
 

@@ -176,6 +176,8 @@ def reset_countdown_label(reset_ms, now_ts=None) -> str:
 def provider_display_name(provider: str) -> str:
     if provider == "glm":
         return "GLM"
+    if provider == "antigravity":
+        return "Antigravity"
     return provider.capitalize()
 
 
@@ -185,6 +187,7 @@ def provider_color(provider: str) -> tuple[int, int, int]:
         "codex": TFT_YELLOW,
         "ollama": TFT_CYAN,
         "claude": TFT_RED,
+        "antigravity": TFT_CYAN,
     }.get(provider, TFT_BLACK)
 
 

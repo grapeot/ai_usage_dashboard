@@ -1847,6 +1847,91 @@ def calc_antigravity_cost(detailed: dict[date, dict[str, dict[str, int]]]) -> Da
     return dict(result)
 
 
+# Antigravity model family detection for quota grouping
+def _antigravity_model_family(label: str, model_id: str) -> str:
+    """Map an Antigravity model to a display family for quota grouping."""
+    combined = f'{label} {model_id}'.lower()
+    if 'gemini' in combined or 'placeholder_m20' in combined or 'placeholder_m132' in combined or 'placeholder_m187' in combined or 'placeholder_m36' in combined or 'placeholder_m16' in combined:
+        return 'Gemini'
+    if 'claude' in combined or 'placeholder_m35' in combined or 'placeholder_m26' in combined:
+        return 'Claude'
+    if 'gpt' in combined or 'gpt-oss' in combined:
+        return 'GPT'
+    return 'Other'
+
+
+def export_antigravity_quota() -> list[QuotaSnapshot]:
+    """Fetch per-model-family quota snapshots from the running Antigravity LS.
+
+    Calls ``GetCascadeModelConfigData`` via the local gRPC HTTP endpoint. Each
+    model entry has a ``quotaInfo`` with ``remainingFraction`` (0-1, 1 = full)
+    and ``resetTime`` (ISO UTC). Models are grouped by family (Gemini, Claude,
+    GPT) and the highest used percentage per family is reported.
+
+    Returns [] when no LS is running or the call fails.
+    """
+    connections = _discover_antigravity_connections()
+    if not connections:
+        return []
+
+    response = None
+    for conn in connections:
+        response = _antigravity_rpc(conn, 'GetCascadeModelConfigData', {})
+        if response:
+            break
+    if not response:
+        return []
+
+    configs = response.get('clientModelConfigs', [])
+    if not isinstance(configs, list):
+        return []
+
+    # Group by family, track max used percentage and earliest reset
+    families: dict[str, dict] = {}
+    for config in configs:
+        if not isinstance(config, dict):
+            continue
+        label = config.get('label', '')
+        model_id = config.get('modelOrAlias', {}).get('model', '') if isinstance(config.get('modelOrAlias'), dict) else ''
+        qi = config.get('quotaInfo', {})
+        if not isinstance(qi, dict):
+            continue
+        remaining = qi.get('remainingFraction')
+        if remaining is None or not isinstance(remaining, (int, float)):
+            continue
+        reset_iso = qi.get('resetTime')
+        family = _antigravity_model_family(label, model_id)
+        used_pct = int(round((1 - remaining) * 100))
+        used_pct = max(0, min(100, used_pct))
+        existing = families.get(family)
+        if existing is None or used_pct > existing['percentage']:
+            families[family] = {
+                'percentage': used_pct,
+                'reset_iso': reset_iso,
+            }
+
+    snapshots: list[QuotaSnapshot] = []
+    for family, info in sorted(families.items()):
+        reset_iso = info.get('reset_iso')
+        reset_ms: int | None = None
+        reset_iso_local: str | None = None
+        if reset_iso:
+            try:
+                dt = datetime.fromisoformat(reset_iso.replace('Z', '+00:00'))
+                reset_ms = int(dt.timestamp() * 1000)
+                reset_iso_local = dt.astimezone().replace(tzinfo=None).isoformat(timespec='minutes')
+            except ValueError:
+                pass
+        snapshots.append(QuotaSnapshot(
+            provider='antigravity',
+            label=f'{family} 5h',
+            percentage=info['percentage'],
+            next_reset_time_ms=reset_ms,
+            next_reset_iso=reset_iso_local,
+        ))
+    return snapshots
+
+
 def parse_codex_event_time(timestamp: str) -> datetime:
     return datetime.fromisoformat(timestamp.replace('Z', '+00:00')).astimezone().replace(tzinfo=None)
 
@@ -2331,8 +2416,14 @@ def build_latest_dashboard_payload(days: int = 30, *, no_cost: bool = False, ski
         print(f"Failed to fetch Claude Code quota: {e}")
         claude_quota = []
 
-    # Provider order for display: z.ai GLM -> Ollama -> Codex -> Claude Code.
-    quotas = glm_quota_to_unified(glm_quota) + ollama_quota + codex_quota + claude_quota
+    # Provider order for display: z.ai GLM -> Ollama -> Codex -> Claude Code -> Antigravity.
+    print("Loading Antigravity IDE quota from live Language Server...")
+    antigravity_quota: list[QuotaSnapshot] = []
+    try:
+        antigravity_quota = export_antigravity_quota()
+    except Exception as e:
+        print(f"Failed to fetch Antigravity quota: {e}")
+    quotas = glm_quota_to_unified(glm_quota) + ollama_quota + codex_quota + claude_quota + antigravity_quota
 
     print("Loading Claude Code data...")
     start_d = datetime.strptime(start_date, '%Y-%m-%d').date()

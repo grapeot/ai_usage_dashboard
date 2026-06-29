@@ -262,6 +262,22 @@ mappings: `M20` = Gemini 3.5 Flash (Medium). Unknown placeholders default to
   may spawn separate LS processes. All are probed; usage is deduplicated by
   `responseId` when present.
 
+### Quota Display
+
+The LS also exposes per-model quota via `GetCascadeModelConfigData`. Each model
+entry has `quotaInfo.remainingFraction` (0-1, 1 = full) and `quotaInfo.resetTime`
+(ISO UTC). Models are grouped by family (Gemini, Claude, GPT) and the highest
+used percentage per family is reported as a `QuotaSnapshot` with
+`provider='antigravity'` and `label='<Family> 5h'`.
+
+The Antigravity quota entries are appended to the unified `quotas` array after
+Claude Code. They appear in the stdout quota block, the e-ink JSON payload, and
+the simulator render. The e-ink firmware renders them with the cyan color
+(same as Ollama, since Antigravity is a multi-model platform like Ollama).
+
+No `.env` keys are needed — quota is fetched from the same live LS process that
+provides token usage.
+
 ## Appendix B: GLM / Z.ai Coding Plan Quota
 
 ### Background

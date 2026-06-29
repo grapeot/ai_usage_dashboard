@@ -18,10 +18,12 @@ from auto_usage import (
     _dechunk,
     _to_int,
     _parse_antigravity_timestamp,
+    _antigravity_model_family,
     parse_antigravity_usage_response,
     fetch_antigravity_trajectories,
     load_antigravity,
     calc_antigravity_cost,
+    export_antigravity_quota,
 )
 
 
@@ -377,6 +379,121 @@ class TestCalcAntigravityCost:
         assert calc_antigravity_cost({}) == {}
 
 
+class TestModelFamily:
+    def test_gemini_from_label(self):
+        assert _antigravity_model_family('Gemini 3.5 Flash (Medium)', 'MODEL_PLACEHOLDER_M20') == 'Gemini'
+
+    def test_gemini_from_model_id(self):
+        assert _antigravity_model_family('Some Label', 'gemini-3-flash-a') == 'Gemini'
+
+    def test_claude_from_label(self):
+        assert _antigravity_model_family('Claude Sonnet 4.6 (Thinking)', 'MODEL_PLACEHOLDER_M35') == 'Claude'
+
+    def test_gpt_from_label(self):
+        assert _antigravity_model_family('GPT-OSS 120B (Medium)', 'MODEL_OPENAI_GPT_OSS_120B_MEDIUM') == 'GPT'
+
+    def test_unknown(self):
+        assert _antigravity_model_family('Mystery Model', 'UNKNOWN_M99') == 'Other'
+
+
+class TestExportAntigravityQuota:
+    def test_no_connections_returns_empty(self):
+        with patch('auto_usage._discover_antigravity_connections', return_value=[]):
+            result = export_antigravity_quota()
+        assert result == []
+
+    def test_basic_quota_response(self):
+        conn = AntigravityConnection(pid=1, port=9999, csrf_token="x")
+        mock_resp = {
+            "clientModelConfigs": [
+                {
+                    "label": "Gemini 3.5 Flash (Medium)",
+                    "modelOrAlias": {"model": "MODEL_PLACEHOLDER_M20"},
+                    "quotaInfo": {"remainingFraction": 0.92, "resetTime": "2026-06-30T00:38:31Z"},
+                },
+                {
+                    "label": "Claude Sonnet 4.6 (Thinking)",
+                    "modelOrAlias": {"model": "MODEL_PLACEHOLDER_M35"},
+                    "quotaInfo": {"remainingFraction": 1.0, "resetTime": "2026-06-30T01:04:05Z"},
+                },
+            ]
+        }
+        with patch('auto_usage._discover_antigravity_connections', return_value=[conn]), \
+             patch('auto_usage._antigravity_rpc', return_value=mock_resp):
+            result = export_antigravity_quota()
+        assert len(result) == 2
+        # Gemini: remaining 0.92 → used 8%
+        gemini = [q for q in result if 'Gemini' in q['label']]
+        assert len(gemini) == 1
+        assert gemini[0]['percentage'] == 8
+        assert gemini[0]['provider'] == 'antigravity'
+        assert gemini[0]['next_reset_time_ms'] is not None
+        # Claude: remaining 1.0 → used 0%
+        claude = [q for q in result if 'Claude' in q['label']]
+        assert len(claude) == 1
+        assert claude[0]['percentage'] == 0
+
+    def test_models_grouped_by_family(self):
+        """Multiple Gemini models with same quota should produce one entry."""
+        conn = AntigravityConnection(pid=1, port=9999, csrf_token="x")
+        mock_resp = {
+            "clientModelConfigs": [
+                {"label": "Gemini 3.5 Flash (Medium)", "modelOrAlias": {"model": "M20"},
+                 "quotaInfo": {"remainingFraction": 0.92, "resetTime": "2026-06-30T00:38:31Z"}},
+                {"label": "Gemini 3.5 Flash (High)", "modelOrAlias": {"model": "M132"},
+                 "quotaInfo": {"remainingFraction": 0.92, "resetTime": "2026-06-30T00:38:31Z"}},
+                {"label": "Gemini 3.1 Pro (Low)", "modelOrAlias": {"model": "M36"},
+                 "quotaInfo": {"remainingFraction": 0.92, "resetTime": "2026-06-30T00:38:31Z"}},
+            ]
+        }
+        with patch('auto_usage._discover_antigravity_connections', return_value=[conn]), \
+             patch('auto_usage._antigravity_rpc', return_value=mock_resp):
+            result = export_antigravity_quota()
+        assert len(result) == 1
+        assert 'Gemini' in result[0]['label']
+
+    def test_max_used_per_family(self):
+        """When models in the same family have different usage, report the max."""
+        conn = AntigravityConnection(pid=1, port=9999, csrf_token="x")
+        mock_resp = {
+            "clientModelConfigs": [
+                {"label": "Gemini 3.5 Flash (Medium)", "modelOrAlias": {"model": "M20"},
+                 "quotaInfo": {"remainingFraction": 0.8, "resetTime": "2026-06-30T00:38:31Z"}},
+                {"label": "Gemini 3.1 Pro (High)", "modelOrAlias": {"model": "M16"},
+                 "quotaInfo": {"remainingFraction": 0.5, "resetTime": "2026-06-30T00:38:31Z"}},
+            ]
+        }
+        with patch('auto_usage._discover_antigravity_connections', return_value=[conn]), \
+             patch('auto_usage._antigravity_rpc', return_value=mock_resp):
+            result = export_antigravity_quota()
+        assert len(result) == 1
+        # max used: 50% (from 0.5 remaining)
+        assert result[0]['percentage'] == 50
+
+    def test_missing_quota_info_skipped(self):
+        conn = AntigravityConnection(pid=1, port=9999, csrf_token="x")
+        mock_resp = {
+            "clientModelConfigs": [
+                {"label": "Gemini 3.5 Flash", "modelOrAlias": {"model": "M20"}},
+                {"label": "Claude Sonnet", "modelOrAlias": {"model": "M35"},
+                 "quotaInfo": {"remainingFraction": 0.5, "resetTime": "2026-06-30T01:00:00Z"}},
+            ]
+        }
+        with patch('auto_usage._discover_antigravity_connections', return_value=[conn]), \
+             patch('auto_usage._antigravity_rpc', return_value=mock_resp):
+            result = export_antigravity_quota()
+        # Only Claude should appear (Gemini has no quotaInfo)
+        assert len(result) == 1
+        assert 'Claude' in result[0]['label']
+
+    def test_rpc_failure_returns_empty(self):
+        conn = AntigravityConnection(pid=1, port=9999, csrf_token="x")
+        with patch('auto_usage._discover_antigravity_connections', return_value=[conn]), \
+             patch('auto_usage._antigravity_rpc', return_value=None):
+            result = export_antigravity_quota()
+        assert result == []
+
+
 @pytest.mark.live_antigravity
 class TestLiveAntigravity:
     """Integration test: requires a running Antigravity LS on localhost.
@@ -396,3 +513,11 @@ class TestLiveAntigravity:
         # at least one bucket should have non-empty data if LS is running with usage
         total = sum(sum(v.values()) for v in result.values())
         assert total > 0, "LS is running but no token usage found — may be a fresh session"
+
+    def test_live_quota_returns_data(self):
+        result = export_antigravity_quota()
+        assert len(result) > 0, "LS is running but no quota data returned"
+        for q in result:
+            assert q['provider'] == 'antigravity'
+            assert 0 <= q['percentage'] <= 100
+            assert q['label'] != ''
