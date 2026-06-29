@@ -201,6 +201,171 @@ Use small synthetic samples instead of real local databases.
 
 V1 prioritizes stability, explainability, and regression coverage.
 
+## 16. Google Antigravity IDE Token Usage
+
+### 16.1 Overview
+
+Antigravity IDE's Language Server (LS) is a Go binary that mediates all model
+calls and retains per-generation token usage in memory. The usage is exposed
+through a local gRPC-over-HTTP service (Connect-Protocol). No local file
+contains token counts; the only data source is the live LS process.
+
+### 16.2 Discovery Algorithm
+
+```
+1. ps -ww -eo pid,args → filter for language_server + antigravity
+2. extract --csrf_token from argv
+3. lsof -Pan -p <pid> -iTCP -sTCP:LISTEN → candidate ports
+4. probe each port: POST /exa.language_server_pb.LanguageServerService/Heartbeat
+   with X-Codeium-Csrf-Token header
+5. first port returning HTTP 200 → LS HTTP gRPC endpoint
+```
+
+No user configuration. The csrf token and port are ephemeral (regenerated on
+each LS restart).
+
+### 16.3 gRPC Methods
+
+Two methods are called:
+
+**GetAllCascadeTrajectories**
+
+```text
+POST /exa.language_server_pb.LanguageServerService/GetAllCascadeTrajectories
+Content-Type: application/json
+Connect-Protocol-Version: 1
+X-Codeium-Csrf-Token: <csrf>
+
+Body: {}
+```
+
+Response contains `trajectorySummaries` (array or object keyed by cascadeId).
+Each entry has `cascadeId`, `stepCount`, `lastModifiedTime`.
+
+**GetCascadeTrajectoryGeneratorMetadata**
+
+```text
+Body: {"cascadeId": "<trajectory-id>"}
+```
+
+Response contains `generatorMetadata[]`. Each entry has:
+- `chatModel.responseModel` — model ID string (e.g. `gemini-3-flash-a`)
+- `chatModel.chatStartMetadata.createdAt` — ISO timestamp
+- `chatModel.retryInfos[].usage` — per-generation token accounting
+
+### 16.4 Usage Shape
+
+```json
+{
+  "inputTokens": 12345,
+  "outputTokens": 678,
+  "cacheReadTokens": 98765,
+  "thinkingOutputTokens": 210,
+  "responseId": "resp-abc123"
+}
+```
+
+`cacheWriteTokens` is absent in Antigravity responses; recorded as 0.
+`thinkingOutputTokens` maps to the `reasoning` field in the unified
+`TokenBreakdown`.
+
+### 16.5 Model → Bucket Classification
+
+```python
+def classify_antigravity_model(model_id: str) -> str:
+    m = (model_id or "").lower()
+    if "gemini" in m or m == "model_placeholder_m20":
+        return "gemini"
+    if "claude" in m:
+        return "claude"
+    if "gpt" in m:
+        return "gpt_opencode"
+    if "deepseek" in m:
+        return "deepseek"
+    return "opencode_other"
+```
+
+`MODEL_PLACEHOLDER_M20` is the LS internal enum for Gemini 3.5 Flash (Medium).
+The mapping is hardcoded based on probing; if Antigravity adds new placeholder
+codes, they are logged to stderr and default to `gemini`.
+
+### 16.6 Date Aggregation
+
+Each `retryInfo.usage` entry has a `createdAt` (from `chatStartMetadata`) or
+`timestamp` field. The timestamp is parsed to a local date and tokens are
+aggregated:
+
+```python
+{date: {"input": N, "output": N, "cache_read": N, "thinking": N}}
+```
+
+The totals (input + output + cache_read + thinking) are added to the existing
+Gemini (or other) bucket's daily dict, merging with OpenCode-routed Gemini
+traffic.
+
+### 16.7 Deduplication
+
+When `responseId` is present in the usage entry, it is used as a dedup key
+across multiple LS processes (multiple Antigravity windows). Entries with the
+same `responseId` are counted once.
+
+### 16.8 Functions Added To `auto_usage.py`
+
+- `discover_antigravity_ls()` → `list[AntigravityConnection]` (pid, port, csrf)
+- `antigravity_rpc(connection, method, body)` → `dict` (HTTP/JSON gRPC)
+- `fetch_antigravity_trajectories(connections)` → `list[dict]` (cascadeId, …)
+- `fetch_antigravity_usage(connection, cascade_id)` → `list[UsageEntry]`
+- `classify_antigravity_model(model_id)` → `str` (bucket name)
+- `load_antigravity()` → `dict[str, dict[date, int]]` (per-bucket daily tokens)
+- `calc_antigravity_cost(daily_by_model)` → `DailyCosts`
+
+### 16.9 Cost Estimation
+
+Antigravity Gemini usage is costed at `gemini-3-flash` rates ($0.50/M input,
+$3.00/M output). `cacheRead` is costed at the Gemini cached rate (20% of input
+= $0.10/M). `thinkingOutputTokens` are added to output for cost purposes. The
+existing `calc_cost()` function is reused.
+
+### 16.10 Integration Point
+
+In `build_latest_dashboard_payload()`:
+
+```python
+antigravity_data = load_antigravity()
+# merge antigravity gemini into gemini bucket
+for d, v in antigravity_data.get("gemini", {}).items():
+    gemini[d] = gemini.get(d, 0) + v
+# similarly for claude, gpt_opencode, deepseek, other
+```
+
+No new column in the stdout table. No new e-ink category. Antigravity tokens
+appear in existing buckets (primarily Gemini).
+
+### 16.11 Test Strategy
+
+Unit tests (`tests/test_antigravity.py`):
+
+- `classify_antigravity_model()` for known and unknown model IDs
+- `parse_antigravity_usage_response()` with mocked gRPC JSON (synthetic
+  generatorMetadata with retryInfos)
+- date aggregation from `chatStartMetadata.createdAt`
+- dedup by `responseId`
+- empty/missing fields do not crash
+- `discover_antigravity_ls()` with mocked `ps`/`lsof` output
+
+Integration test (marked `live_antigravity`): skipped unless an Antigravity LS
+is detected on localhost. Calls the real gRPC and asserts non-zero token totals
+for the current day.
+
+### 16.12 Compatibility
+
+- No existing token columns, cost logic, or e-ink categories change.
+- When the LS is not running, `load_antigravity()` returns empty dicts — no
+  crash, no error.
+- No new `.env` keys.
+- The `gemini` bucket now includes Antigravity Gemini + OpenCode Gemini +
+  any future Gemini sources. This is the intended consolidation.
+
 ## 12. GLM / Z.ai Coding Plan Quota
 
 ### 12.1 Overview
