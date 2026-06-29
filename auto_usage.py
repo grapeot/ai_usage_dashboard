@@ -7,6 +7,7 @@ import json
 import csv
 import importlib
 import re
+import socket
 import subprocess
 import os
 import sys
@@ -1366,6 +1367,486 @@ def load_opencode_detailed(exclude_glm: bool = True, start_ts: int | None = None
     return dict(daily_models)
 
 
+# ---------------------------------------------------------------------------
+# Google Antigravity IDE
+#
+# The Antigravity Language Server (LS) is a Go binary that mediates all model
+# calls and retains per-generation token usage in memory. The usage is exposed
+# through a local gRPC-over-HTTP service (Connect-Protocol). No local file
+# contains token counts; the only data source is the live LS process.
+#
+# Discovery is fully automatic: ps finds the LS process, lsof finds its
+# listening ports, and the csrf token is extracted from argv. No .env keys,
+# cookies, or user configuration are needed.
+# ---------------------------------------------------------------------------
+
+# Known MODEL_PLACEHOLDER_M* → model family. Probed from the LS binary and
+# verified against gen_metadata. Unknown placeholders default to "gemini"
+# (Antigravity's default model family) and are logged to stderr.
+ANTIGRAVITY_MODEL_PLACEHOLDER_MAP: dict[str, str] = {
+    'model_placeholder_m20': 'gemini-3-flash-a',
+}
+
+
+class AntigravityConnection(TypedDict):
+    pid: int
+    port: int
+    csrf_token: str
+
+
+def _classify_antigravity_model(model_id: str) -> str:
+    """Map an Antigravity LS model ID to a dashboard bucket name."""
+    m = (model_id or '').lower().strip()
+    if not m:
+        return 'opencode_other'
+    # resolve placeholder enum
+    if m.startswith('model_placeholder_'):
+        resolved = ANTIGRAVITY_MODEL_PLACEHOLDER_MAP.get(m)
+        if resolved:
+            m = resolved
+        else:
+            print(f"Antigravity: unknown model placeholder {model_id!r}, defaulting to gemini bucket", file=sys.stderr)
+            return 'gemini'
+    if 'gemini' in m:
+        return 'gemini'
+    if 'claude' in m:
+        return 'anthropic'
+    if 'gpt' in m:
+        return 'gpt_opencode'
+    if 'deepseek' in m:
+        return 'deepseek'
+    return 'opencode_other'
+
+
+def _extract_flag_value(argv: str, flag: str) -> str | None:
+    """Extract a --flag value from a command-line string."""
+    compact = f'{flag}='
+    idx = argv.find(compact)
+    if idx >= 0:
+        rest = argv[idx + len(compact):]
+        return rest.split()[0] if rest else None
+    idx = argv.find(flag)
+    if idx < 0:
+        return None
+    rest = argv[idx + len(flag):]
+    tokens = rest.split()
+    return tokens[0] if tokens else None
+
+
+def _is_antigravity_ls_command(command: str) -> bool:
+    lower = command.lower()
+    return (
+        'language_server' in lower
+        and ('antigravity' in lower or '--app_data_dir antigravity' in lower)
+    )
+
+
+def _discover_antigravity_connections() -> list[AntigravityConnection]:
+    """Find running Antigravity LS processes and their gRPC HTTP ports.
+
+    Returns a list of connections sorted by PID descending (most recent LS
+    first). Each connection has been verified via a Heartbeat probe.
+    """
+    try:
+        result = subprocess.run(
+            ['ps', '-ww', '-eo', 'pid,args'],
+            capture_output=True, text=True, timeout=5,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return []
+
+    candidates: list[tuple[int, str]] = []
+    for line in result.stdout.splitlines():
+        stripped = line.strip()
+        if not stripped:
+            continue
+        parts = stripped.split(None, 1)
+        if len(parts) < 2:
+            continue
+        try:
+            pid = int(parts[0])
+        except ValueError:
+            continue
+        command = parts[1]
+        if not _is_antigravity_ls_command(command):
+            continue
+        candidates.append((pid, command))
+
+    connections: list[AntigravityConnection] = []
+    for pid, command in candidates:
+        csrf = _extract_flag_value(command, '--csrf_token')
+        if not csrf or len(csrf) < 32:
+            continue
+        ports = _find_listening_ports(pid)
+        for port in ports:
+            if _probe_antigravity_heartbeat(port, csrf):
+                connections.append(AntigravityConnection(pid=pid, port=port, csrf_token=csrf))
+                break  # one HTTP gRPC port per LS is enough
+
+    connections.sort(key=lambda c: c['pid'], reverse=True)
+    return connections
+
+
+def _find_listening_ports(pid: int) -> list[int]:
+    """Use lsof to find TCP listening ports for a PID."""
+    try:
+        result = subprocess.run(
+            ['lsof', '-Pan', '-p', str(pid), '-iTCP', '-sTCP:LISTEN'],
+            capture_output=True, text=True, timeout=5,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return []
+    ports: list[int] = []
+    for line in result.stdout.splitlines():
+        for token in line.split():
+            for prefix in ('127.0.0.1:', 'localhost:', '*:', '::1:'):
+                if token.startswith(prefix):
+                    cleaned = token[len(prefix):].rstrip('(LISTEN),')
+                    try:
+                        p = int(cleaned)
+                        if p not in ports:
+                            ports.append(p)
+                    except ValueError:
+                        pass
+    return ports
+
+
+def _probe_antigravity_heartbeat(port: int, csrf_token: str) -> bool:
+    """Send a Heartbeat gRPC call to verify the port is an Antigravity LS."""
+    body = '{"uuid":"00000000-0000-0000-0000-000000000000"}'
+    request = (
+        f'POST /exa.language_server_pb.LanguageServerService/Heartbeat HTTP/1.1\r\n'
+        f'Host: 127.0.0.1:{port}\r\n'
+        f'Content-Type: application/json\r\n'
+        f'Content-Length: {len(body)}\r\n'
+        f'Connect-Protocol-Version: 1\r\n'
+        f'X-Codeium-Csrf-Token: {csrf_token}\r\n'
+        f'Connection: close\r\n\r\n{body}'
+    )
+    try:
+        with socket.create_connection(('127.0.0.1', port), timeout=3) as s:
+            s.sendall(request.encode())
+            response = s.recv(4096)
+        return response.startswith(b'HTTP/1.1 200')
+    except (OSError, socket.timeout):
+        return False
+
+
+def _antigravity_rpc(
+    connection: AntigravityConnection, method: str, body: dict,
+) -> dict | None:
+    """Call an Antigravity LS gRPC method over HTTP/JSON.
+
+    Returns the parsed JSON response dict, or None on any error (connection
+    refused, non-200 status, invalid JSON, timeout).
+    """
+    payload = json.dumps(body)
+    request = (
+        f'POST /exa.language_server_pb.LanguageServerService/{method} HTTP/1.1\r\n'
+        f'Host: 127.0.0.1:{connection["port"]}\r\n'
+        f'Content-Type: application/json\r\n'
+        f'Content-Length: {len(payload)}\r\n'
+        f'Connect-Protocol-Version: 1\r\n'
+        f'X-Codeium-Csrf-Token: {connection["csrf_token"]}\r\n'
+        f'Connection: close\r\n\r\n{payload}'
+    )
+    try:
+        with socket.create_connection(('127.0.0.1', connection['port']), timeout=10) as s:
+            s.sendall(request.encode())
+            buf = b''
+            while True:
+                chunk = s.recv(262144)
+                if not chunk:
+                    break
+                buf += chunk
+    except (OSError, socket.timeout):
+        return None
+
+    header_end = buf.find(b'\r\n\r\n')
+    if header_end < 0:
+        return None
+    header = buf[:header_end].decode(errors='replace')
+    body_raw = buf[header_end + 4:]
+
+    status_parts = header.split()
+    if len(status_parts) < 2 or status_parts[1] != '200':
+        return None
+
+    # Handle chunked transfer encoding
+    if 'transfer-encoding: chunked' in header.lower():
+        body_raw = _dechunk(body_raw)
+
+    try:
+        return json.loads(body_raw)
+    except (json.JSONDecodeError, UnicodeDecodeError):
+        return None
+
+
+def _dechunk(data: bytes) -> bytes:
+    """Decode HTTP chunked transfer-encoding body."""
+    out = bytearray()
+    i = 0
+    while i < len(data):
+        nl = data.find(b'\r\n', i)
+        if nl < 0:
+            break
+        try:
+            size = int(data[i:nl], 16)
+        except ValueError:
+            break
+        if size == 0:
+            break
+        out.extend(data[nl + 2: nl + 2 + size])
+        i = nl + 2 + size + 2
+    return bytes(out)
+
+
+def _parse_antigravity_timestamp(value) -> int | None:
+    """Parse a timestamp value (epoch-ms int or ISO string) to epoch-ms."""
+    if value is None:
+        return None
+    if isinstance(value, (int, float)):
+        return int(value)
+    if isinstance(value, str):
+        try:
+            return int(value)
+        except ValueError:
+            pass
+        try:
+            dt = datetime.fromisoformat(value.replace('Z', '+00:00'))
+            return int(dt.timestamp() * 1000)
+        except ValueError:
+            pass
+    return None
+
+
+def _to_int(value) -> int:
+    if value is None:
+        return 0
+    if isinstance(value, (int, float)):
+        return int(value)
+    try:
+        return int(str(value))
+    except (ValueError, TypeError):
+        return 0
+
+
+def fetch_antigravity_trajectories(
+    connections: list[AntigravityConnection],
+) -> list[dict]:
+    """Fetch all cascade trajectory summaries from all LS connections."""
+    seen: set[str] = set()
+    trajectories: list[dict] = []
+    for conn in connections:
+        resp = _antigravity_rpc(conn, 'GetAllCascadeTrajectories', {})
+        if not resp:
+            continue
+        summaries = resp.get('trajectorySummaries') or resp.get('cascadeTrajectories') or []
+        if isinstance(summaries, dict):
+            summaries = [
+                {'cascadeId': k, **(v if isinstance(v, dict) else {})}
+                for k, v in summaries.items()
+            ]
+        if not isinstance(summaries, list):
+            continue
+        for s in summaries:
+            if not isinstance(s, dict):
+                continue
+            cid = s.get('cascadeId') or s.get('trajectoryId') or s.get('id')
+            if not cid or cid in seen:
+                continue
+            seen.add(cid)
+            trajectories.append(s)
+    return trajectories
+
+
+def parse_antigravity_usage_response(
+    response: dict, session_id: str = '',
+) -> list[dict]:
+    """Parse a GetCascadeTrajectoryGeneratorMetadata response into usage entries.
+
+    Each entry: {model, timestamp_ms, input, output, cache_read, thinking,
+    response_id, session_id}.
+    """
+    meta = response.get('generatorMetadata', [])
+    if not isinstance(meta, list):
+        return []
+
+    entries: list[dict] = []
+    for m in meta:
+        if not isinstance(m, dict):
+            continue
+        cm = m.get('chatModel', m)
+        if not isinstance(cm, dict):
+            continue
+        model_id = cm.get('responseModel') or cm.get('model') or 'unknown'
+        created_at = cm.get('chatStartMetadata', {}).get('createdAt') if isinstance(cm.get('chatStartMetadata'), dict) else None
+        fallback_ts = _parse_antigravity_timestamp(created_at)
+
+        retry_infos = cm.get('retryInfos', [])
+        if not isinstance(retry_infos, list):
+            continue
+        for r in retry_infos:
+            if not isinstance(r, dict):
+                continue
+            u = r.get('usage', r)
+            if not isinstance(u, dict):
+                u = {}
+            inp = _to_int(u.get('inputTokens'))
+            out = _to_int(u.get('outputTokens'))
+            cr = _to_int(u.get('cacheReadTokens'))
+            cw = _to_int(u.get('cacheWriteTokens'))
+            th = _to_int(u.get('thinkingOutputTokens'))
+            if inp + out + cr + cw + th == 0:
+                continue
+            ts = _parse_antigravity_timestamp(
+                u.get('createdAt') or u.get('timestamp')
+            ) or fallback_ts
+            entries.append({
+                'model': model_id,
+                'timestamp_ms': ts,
+                'input': inp,
+                'output': out,
+                'cache_read': cr,
+                'cache_write': cw,
+                'thinking': th,
+                'response_id': u.get('responseId'),
+                'session_id': session_id,
+            })
+    return entries
+
+
+def load_antigravity() -> dict[str, DailyTokens]:
+    """Load Antigravity IDE token usage from the live Language Server.
+
+    Returns a dict mapping dashboard bucket names to {date: total_tokens}.
+    Buckets: 'gemini', 'anthropic', 'gpt_opencode', 'deepseek', 'opencode_other'.
+    Returns empty dicts for all buckets when no LS is running.
+    """
+    empty = {
+        'gemini': {},
+        'anthropic': {},
+        'gpt_opencode': {},
+        'deepseek': {},
+        'opencode_other': {},
+    }
+    connections = _discover_antigravity_connections()
+    if not connections:
+        return empty
+
+    trajectories = fetch_antigravity_trajectories(connections)
+    if not trajectories:
+        return empty
+
+    totals: dict[str, defaultdict[date, int]] = {
+        'gemini': defaultdict(int),
+        'anthropic': defaultdict(int),
+        'gpt_opencode': defaultdict(int),
+        'deepseek': defaultdict(int),
+        'opencode_other': defaultdict(int),
+    }
+    seen_response_ids: set[str] = set()
+
+    for summary in trajectories:
+        cid = summary.get('cascadeId') or summary.get('trajectoryId') or summary.get('id')
+        if not cid:
+            continue
+        # try each connection until one succeeds
+        for conn in connections:
+            resp = _antigravity_rpc(conn, 'GetCascadeTrajectoryGeneratorMetadata', {'cascadeId': cid})
+            if not resp:
+                continue
+            entries = parse_antigravity_usage_response(resp, session_id=cid)
+            for e in entries:
+                # dedup by responseId across connections
+                rid = e.get('response_id')
+                if rid:
+                    if rid in seen_response_ids:
+                        continue
+                    seen_response_ids.add(rid)
+                ts = e.get('timestamp_ms')
+                if not ts:
+                    continue
+                dt = datetime.fromtimestamp(ts / 1000).date()
+                bucket = _classify_antigravity_model(e['model'])
+                total = e['input'] + e['output'] + e['cache_read'] + e['cache_write'] + e['thinking']
+                if total > 0:
+                    totals[bucket][dt] += total
+            break  # got data from one connection, no need to try others
+
+    return {k: dict(v) for k, v in totals.items()}
+
+
+def load_antigravity_detailed() -> dict[date, dict[str, dict[str, int]]]:
+    """Load per-model Antigravity token breakdown for cost calculation.
+
+    Returns {date: {model_id: {input, output, cache_read, cache_write, thinking}}}.
+    """
+    empty: dict[date, dict] = {}
+    connections = _discover_antigravity_connections()
+    if not connections:
+        return empty
+
+    trajectories = fetch_antigravity_trajectories(connections)
+    if not trajectories:
+        return empty
+
+    daily_models: defaultdict[date, defaultdict[str, dict[str, int]]] = defaultdict(
+        lambda: defaultdict(lambda: {'input': 0, 'output': 0, 'cache_read': 0, 'cache_write': 0, 'thinking': 0})
+    )
+    seen_response_ids: set[str] = set()
+
+    for summary in trajectories:
+        cid = summary.get('cascadeId') or summary.get('trajectoryId') or summary.get('id')
+        if not cid:
+            continue
+        for conn in connections:
+            resp = _antigravity_rpc(conn, 'GetCascadeTrajectoryGeneratorMetadata', {'cascadeId': cid})
+            if not resp:
+                continue
+            entries = parse_antigravity_usage_response(resp, session_id=cid)
+            for e in entries:
+                rid = e.get('response_id')
+                if rid:
+                    if rid in seen_response_ids:
+                        continue
+                    seen_response_ids.add(rid)
+                ts = e.get('timestamp_ms')
+                if not ts:
+                    continue
+                dt = datetime.fromtimestamp(ts / 1000).date()
+                model_id = e['model']
+                daily_models[dt][model_id]['input'] += e['input']
+                daily_models[dt][model_id]['output'] += e['output'] + e['thinking']
+                daily_models[dt][model_id]['cache_read'] += e['cache_read']
+                daily_models[dt][model_id]['cache_write'] += e['cache_write']
+            break
+
+    return {d: dict(v) for d, v in daily_models.items()}
+
+
+def calc_antigravity_cost(detailed: dict[date, dict[str, dict[str, int]]]) -> DailyCosts:
+    """Calculate USD cost from Antigravity per-model breakdown."""
+    result: defaultdict[date, float] = defaultdict(float)
+    for dt, models in detailed.items():
+        for model_id, tok in models.items():
+            p = get_pricing(model_id)
+            if not p:
+                # try antigravity- prefixed alias
+                p = get_pricing(f'antigravity-{model_id}')
+            if not p and 'gemini' in (model_id or '').lower():
+                p = get_pricing('gemini-3-flash')
+            if not p:
+                continue
+            result[dt] += calc_cost(
+                p,
+                input_tokens=tok['input'] + tok['cache_read'],
+                output_tokens=tok['output'],
+                cached_tokens=tok['cache_read'],
+            )
+    return dict(result)
+
+
 def parse_codex_event_time(timestamp: str) -> datetime:
     return datetime.fromisoformat(timestamp.replace('Z', '+00:00')).astimezone().replace(tzinfo=None)
 
@@ -1870,11 +2351,27 @@ def build_latest_dashboard_payload(days: int = 30, *, no_cost: bool = False, ski
     opencode_deepseek = opencode_data['deepseek']
     opencode_other = opencode_data['opencode_other']
 
+    print("Loading Antigravity IDE data from live Language Server...")
+    antigravity_data = load_antigravity()
+    for d, v in antigravity_data.get('gemini', {}).items():
+        gemini[d] = gemini.get(d, 0) + v
+    antigravity_detailed = {}
+    if not no_cost:
+        antigravity_detailed = load_antigravity_detailed()
+
     claude_combined = defaultdict(int)
     for d, v in claude_code.items():
         claude_combined[d] += v
     for d, v in anthropic.items():
         claude_combined[d] += v
+    for d, v in antigravity_data.get('anthropic', {}).items():
+        claude_combined[d] += v
+    for d, v in antigravity_data.get('gpt_opencode', {}).items():
+        gpt_opencode[d] = gpt_opencode.get(d, 0) + v
+    for d, v in antigravity_data.get('deepseek', {}).items():
+        opencode_deepseek[d] = opencode_deepseek.get(d, 0) + v
+    for d, v in antigravity_data.get('opencode_other', {}).items():
+        opencode_other[d] = opencode_other.get(d, 0) + v
 
     print("Estimating AI active time from OpenCode + Codex turn windows...")
     opencode_turn_intervals = load_opencode_turn_intervals(exclude_glm=True, start_ts=start_day_ts, end_ts=next_day_ts)
@@ -1882,6 +2379,10 @@ def build_latest_dashboard_payload(days: int = 30, *, no_cost: bool = False, ski
     daily_active_seconds = compute_daily_ai_active_seconds(opencode_turn_intervals, codex_turn_intervals, start_date, end_date)
 
     daily_costs = compute_daily_costs(start_date, end_date, start_day_ts, next_day_ts, codex, glm) if not no_cost else None
+    if daily_costs is not None and antigravity_detailed:
+        for d, v in calc_antigravity_cost(antigravity_detailed).items():
+            if start_d <= d <= end_d:
+                daily_costs[d] = daily_costs.get(d, 0.0) + v
     gpt_combined = merge_daily_tokens(gpt_opencode, codex)
     glm_combined = merge_daily_tokens(glm, glm_opencode)
     return generate_dashboard(cursor, glm_combined, gemini, dict(claude_combined), gpt_combined, opencode_deepseek, opencode_other, start_date, end_date, daily_costs, daily_active_seconds=daily_active_seconds, skip_desktop_chart=skip_desktop_chart, glm_quota=glm_quota, quotas=quotas)

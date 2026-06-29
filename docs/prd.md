@@ -160,6 +160,108 @@ The bottom chart uses one bar per day in V1.
 - Daily window counts and longest window.
 - Source-level active time breakdown.
 
+## Appendix C: Google Antigravity IDE Token Usage
+
+### Background
+
+Google Antigravity IDE runs a Go-based Language Server (LS) that mediates all
+model calls. The LS holds per-generation token usage in memory and exposes it
+through a local gRPC service. Local transcript files
+(`~/.gemini/antigravity-ide/brain/<id>/.system_generated/logs/transcript_full.jsonl`)
+and conversation SQLite stores (`~/.gemini/antigravity-ide/conversations/<id>.db`)
+do **not** contain token usage fields — only the LS gRPC does.
+
+### Goals
+
+Add Antigravity IDE token usage to `auto_usage.py`:
+
+- discover the running LS process and its gRPC endpoint automatically
+- fetch per-trajectory token usage via `GetCascadeTrajectoryGeneratorMetadata`
+- aggregate by date and merge into the existing Gemini bucket (Antigravity's
+  primary model is Gemini; non-Gemini models route to their respective buckets)
+- no user configuration required (no `.env` keys, no cookies, no tokens)
+
+### Non-Goals
+
+- Do not parse local transcript or conversation DB files for token counts (they
+  do not contain usage data).
+- Do not estimate tokens via tokenizer heuristics.
+- Do not fetch quota snapshots from the LS in V1 (the LS exposes model credits
+  but the protobuf is opaque; quota display is a future phase).
+- Do not persist a sync cache; data is fetched live each run. When the LS is not
+  running, Antigravity contributes zero tokens for that run.
+
+### Discovery: No Configuration Needed
+
+The LS process is discovered at runtime:
+
+1. `ps -ww -eo pid,args` finds processes matching `language_server` with
+   `--app_data_dir antigravity` or `antigravity-ide`.
+2. `--csrf_token` is extracted from argv (hex string, ≥32 chars).
+3. `lsof -Pan -p <pid> -iTCP -sTCP:LISTEN` finds TCP listening ports.
+4. Each port is probed with a `Heartbeat` gRPC call (HTTP/JSON, Connect-Protocol
+   header). The port returning HTTP 200 is the LS HTTP gRPC endpoint.
+
+All discovery inputs (csrf token, port) come from the live process — nothing is
+configured or stored.
+
+### Data Flow
+
+```
+ps + lsof → LS port + csrf
+  ↓
+GetAllCascadeTrajectories → [{cascadeId, stepCount, lastModified}]
+  ↓
+GetCascadeTrajectoryGeneratorMetadata(cascadeId) → generatorMetadata[]
+  ↓
+generatorMetadata[].chatModel.retryInfos[].usage
+  → {inputTokens, outputTokens, cacheReadTokens, thinkingOutputTokens}
+  ↓
+classify by model → gemini / claude / gpt / other bucket
+  ↓
+{date: total_tokens}
+```
+
+### Bucket Assignment
+
+Antigravity models map to existing dashboard buckets:
+
+| LS model ID | Dashboard bucket | Reason |
+|---|---|---|
+| `gemini-3-flash-a`, `MODEL_PLACEHOLDER_M20` | `gemini` | Gemini 3.5 Flash (Medium) |
+| `claude-*` (if used via Antigravity) | `claude` | Claude routed through Antigravity |
+| `gpt-*` (if used via Antigravity) | `gpt_opencode` | GPT routed through Antigravity |
+
+The `MODEL_PLACEHOLDER_M*` enum is Antigravity's internal model code. Known
+mappings: `M20` = Gemini 3.5 Flash (Medium). Unknown placeholders default to
+`gemini` (Antigravity's default model family) but are logged to stderr.
+
+### Success Criteria
+
+- `python auto_usage.py -d 7` includes Antigravity token counts in the Gemini
+  column when the LS is running.
+- When the LS is not running, no crash and no error — Antigravity simply
+  contributes zero.
+- Unit tests cover: LS discovery logic (mocked ps/lsof), gRPC response parsing,
+  model-to-bucket classification, and date aggregation.
+- No new `.env` keys, cookies, or user configuration.
+
+### Risks And Limits
+
+- **Live-only data**: token usage is only available while the LS is running.
+  Historical sessions whose LS has exited cannot be recovered. A future phase
+  could cache sync results (like tokscale's `antigravity sync`).
+- **Undocumented gRPC**: the `GetCascadeTrajectoryGeneratorMetadata` endpoint is
+  not publicly documented. It may change between Antigravity versions. The
+  parser is defensive: missing fields default to zero, unknown model
+  placeholders are logged but do not crash.
+- **No cacheWrite**: the LS response includes `cacheReadTokens` and
+  `thinkingOutputTokens` but not `cacheWriteTokens`. `cacheWrite` is recorded as
+  0 for Antigravity entries.
+- **Multiple LS instances**: multiple Antigravity windows or the Agent Manager
+  may spawn separate LS processes. All are probed; usage is deduplicated by
+  `responseId` when present.
+
 ## Appendix B: GLM / Z.ai Coding Plan Quota
 
 ### Background

@@ -22,6 +22,7 @@ eink = [
 [tool.pytest.ini_options]
 markers = [
     "live_api: tests that call real provider APIs or require real local credentials",
+    "live_antigravity: tests that require a running Antigravity Language Server on localhost",
     "hardware: tests or checks that require physical e-ink hardware or Arduino tooling",
 ]
 
