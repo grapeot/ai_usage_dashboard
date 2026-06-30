@@ -19,6 +19,7 @@ ollama_settings.html
 token_usage_dashboard.png
 token_usage_epaper.png
 token_usage_eink.json
+antigravity_usage_cache.json
 update.log
 eink/e1002/secrets.h
 .private_git_backups/
