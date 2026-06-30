@@ -1716,12 +1716,83 @@ def parse_antigravity_usage_response(
     return entries
 
 
-def load_antigravity() -> dict[str, DailyTokens]:
-    """Load Antigravity IDE token usage from the live Language Server.
+ANTIGRAVITY_CACHE_FILE = os.path.join(SCRIPT_DIR, 'antigravity_usage_cache.json')
 
-    Returns a dict mapping dashboard bucket names to {date: total_tokens}.
-    Buckets: 'gemini', 'anthropic', 'gpt_opencode', 'deepseek', 'opencode_other'.
-    Returns empty dicts for all buckets when no LS is running.
+
+def _load_antigravity_cache() -> list[dict]:
+    """Load cached Antigravity usage entries from disk.
+
+    Returns a list of entry dicts with keys: model, timestamp, input, output,
+    cache_read, cache_write, thinking, response_id, session_id.
+    Returns [] when the cache file is absent or malformed.
+    """
+    if not os.path.exists(ANTIGRAVITY_CACHE_FILE):
+        return []
+    try:
+        with open(ANTIGRAVITY_CACHE_FILE) as f:
+            data = json.load(f)
+        entries = data.get('entries', [])
+        if not isinstance(entries, list):
+            return []
+        return entries
+    except (json.JSONDecodeError, OSError):
+        return []
+
+
+def _save_antigravity_cache(entries: list[dict]) -> None:
+    """Write usage entries to the cache file, deduplicated by response_id."""
+    deduped: list[dict] = []
+    seen: set[str] = set()
+    for e in entries:
+        rid = e.get('response_id')
+        if rid:
+            if rid in seen:
+                continue
+            seen.add(rid)
+        deduped.append(e)
+    with open(ANTIGRAVITY_CACHE_FILE, 'w') as f:
+        json.dump({
+            'version': 1,
+            'updated_at': datetime.now().isoformat(),
+            'entries': deduped,
+        }, f, indent=2)
+
+
+def _entry_to_date(entry: dict) -> date | None:
+    """Extract a date from a cache entry's timestamp field."""
+    ts = entry.get('timestamp')
+    if ts is None:
+        ts = entry.get('timestamp_ms')
+    if isinstance(ts, (int, float)) and ts > 0:
+        return datetime.fromtimestamp(ts / 1000).date()
+    if isinstance(ts, str) and ts:
+        try:
+            dt = datetime.fromisoformat(ts.replace('Z', '+00:00'))
+            return dt.date()
+        except ValueError:
+            pass
+    return None
+
+
+def _entry_total(entry: dict) -> int:
+    """Sum all token fields in a cache entry."""
+    return (
+        int(entry.get('input', 0) or 0)
+        + int(entry.get('output', 0) or 0)
+        + int(entry.get('cache_read', 0) or 0)
+        + int(entry.get('cache_write', 0) or 0)
+        + int(entry.get('thinking', 0) or 0)
+    )
+
+
+def load_antigravity() -> dict[str, DailyTokens]:
+    """Load Antigravity IDE token usage from cache + live Language Server.
+
+    Reads cached entries from disk first, then fetches live data from any
+    running LS. Merges by response_id dedup, writes the merged set back to
+    cache, and returns per-bucket daily token totals.
+
+    Returns empty dicts for all buckets when neither cache nor LS has data.
     """
     empty = {
         'gemini': {},
@@ -1730,14 +1801,55 @@ def load_antigravity() -> dict[str, DailyTokens]:
         'deepseek': {},
         'opencode_other': {},
     }
+
+    # 1. Load cached entries
+    cached = _load_antigravity_cache()
+    all_entries: list[dict] = list(cached)
+    seen_response_ids: set[str] = set()
+    for e in cached:
+        rid = e.get('response_id')
+        if rid:
+            seen_response_ids.add(rid)
+
+    # 2. Fetch live data from LS
     connections = _discover_antigravity_connections()
-    if not connections:
-        return empty
+    if connections:
+        trajectories = fetch_antigravity_trajectories(connections)
+        for summary in trajectories:
+            cid = summary.get('cascadeId') or summary.get('trajectoryId') or summary.get('id')
+            if not cid:
+                continue
+            for conn in connections:
+                resp = _antigravity_rpc(conn, 'GetCascadeTrajectoryGeneratorMetadata', {'cascadeId': cid})
+                if not resp:
+                    continue
+                entries = parse_antigravity_usage_response(resp, session_id=cid)
+                for e in entries:
+                    rid = e.get('response_id')
+                    if rid and rid in seen_response_ids:
+                        continue
+                    if rid:
+                        seen_response_ids.add(rid)
+                    # Normalize for cache: timestamp_ms → timestamp
+                    cache_entry = {
+                        'model': e['model'],
+                        'timestamp': e.get('timestamp_ms'),
+                        'input': e['input'],
+                        'output': e['output'],
+                        'cache_read': e['cache_read'],
+                        'cache_write': e['cache_write'],
+                        'thinking': e['thinking'],
+                        'response_id': e.get('response_id'),
+                        'session_id': e.get('session_id'),
+                    }
+                    all_entries.append(cache_entry)
+                break
 
-    trajectories = fetch_antigravity_trajectories(connections)
-    if not trajectories:
-        return empty
+    # 3. Write merged entries back to cache
+    if all_entries:
+        _save_antigravity_cache(all_entries)
 
+    # 4. Aggregate by date + bucket
     totals: dict[str, defaultdict[date, int]] = {
         'gemini': defaultdict(int),
         'anthropic': defaultdict(int),
@@ -1745,34 +1857,15 @@ def load_antigravity() -> dict[str, DailyTokens]:
         'deepseek': defaultdict(int),
         'opencode_other': defaultdict(int),
     }
-    seen_response_ids: set[str] = set()
-
-    for summary in trajectories:
-        cid = summary.get('cascadeId') or summary.get('trajectoryId') or summary.get('id')
-        if not cid:
+    for e in all_entries:
+        dt = _entry_to_date(e)
+        if not dt:
             continue
-        # try each connection until one succeeds
-        for conn in connections:
-            resp = _antigravity_rpc(conn, 'GetCascadeTrajectoryGeneratorMetadata', {'cascadeId': cid})
-            if not resp:
-                continue
-            entries = parse_antigravity_usage_response(resp, session_id=cid)
-            for e in entries:
-                # dedup by responseId across connections
-                rid = e.get('response_id')
-                if rid:
-                    if rid in seen_response_ids:
-                        continue
-                    seen_response_ids.add(rid)
-                ts = e.get('timestamp_ms')
-                if not ts:
-                    continue
-                dt = datetime.fromtimestamp(ts / 1000).date()
-                bucket = _classify_antigravity_model(e['model'])
-                total = e['input'] + e['output'] + e['cache_read'] + e['cache_write'] + e['thinking']
-                if total > 0:
-                    totals[bucket][dt] += total
-            break  # got data from one connection, no need to try others
+        total = _entry_total(e)
+        if total <= 0:
+            continue
+        bucket = _classify_antigravity_model(e.get('model', ''))
+        totals[bucket][dt] += total
 
     return {k: dict(v) for k, v in totals.items()}
 
@@ -1780,47 +1873,24 @@ def load_antigravity() -> dict[str, DailyTokens]:
 def load_antigravity_detailed() -> dict[date, dict[str, dict[str, int]]]:
     """Load per-model Antigravity token breakdown for cost calculation.
 
+    Reads from cache + live LS, same merge logic as load_antigravity().
     Returns {date: {model_id: {input, output, cache_read, cache_write, thinking}}}.
     """
-    empty: dict[date, dict] = {}
-    connections = _discover_antigravity_connections()
-    if not connections:
-        return empty
-
-    trajectories = fetch_antigravity_trajectories(connections)
-    if not trajectories:
-        return empty
-
     daily_models: defaultdict[date, defaultdict[str, dict[str, int]]] = defaultdict(
         lambda: defaultdict(lambda: {'input': 0, 'output': 0, 'cache_read': 0, 'cache_write': 0, 'thinking': 0})
     )
-    seen_response_ids: set[str] = set()
 
-    for summary in trajectories:
-        cid = summary.get('cascadeId') or summary.get('trajectoryId') or summary.get('id')
-        if not cid:
+    # Use cache entries (already merged with live data by load_antigravity)
+    cached = _load_antigravity_cache()
+    for e in cached:
+        dt = _entry_to_date(e)
+        if not dt:
             continue
-        for conn in connections:
-            resp = _antigravity_rpc(conn, 'GetCascadeTrajectoryGeneratorMetadata', {'cascadeId': cid})
-            if not resp:
-                continue
-            entries = parse_antigravity_usage_response(resp, session_id=cid)
-            for e in entries:
-                rid = e.get('response_id')
-                if rid:
-                    if rid in seen_response_ids:
-                        continue
-                    seen_response_ids.add(rid)
-                ts = e.get('timestamp_ms')
-                if not ts:
-                    continue
-                dt = datetime.fromtimestamp(ts / 1000).date()
-                model_id = e['model']
-                daily_models[dt][model_id]['input'] += e['input']
-                daily_models[dt][model_id]['output'] += e['output'] + e['thinking']
-                daily_models[dt][model_id]['cache_read'] += e['cache_read']
-                daily_models[dt][model_id]['cache_write'] += e['cache_write']
-            break
+        model_id = e.get('model', 'unknown')
+        daily_models[dt][model_id]['input'] += int(e.get('input', 0) or 0)
+        daily_models[dt][model_id]['output'] += int(e.get('output', 0) or 0) + int(e.get('thinking', 0) or 0)
+        daily_models[dt][model_id]['cache_read'] += int(e.get('cache_read', 0) or 0)
+        daily_models[dt][model_id]['cache_write'] += int(e.get('cache_write', 0) or 0)
 
     return {d: dict(v) for d, v in daily_models.items()}
 

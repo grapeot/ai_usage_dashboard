@@ -19,6 +19,8 @@ from auto_usage import (
     _to_int,
     _parse_antigravity_timestamp,
     _antigravity_model_family,
+    _entry_to_date,
+    _entry_total,
     parse_antigravity_usage_response,
     fetch_antigravity_trajectories,
     load_antigravity,
@@ -298,7 +300,9 @@ class TestFetchTrajectories:
 
 class TestLoadAntigravity:
     def test_no_connections_returns_empty(self):
-        with patch('auto_usage._discover_antigravity_connections', return_value=[]):
+        with patch('auto_usage._discover_antigravity_connections', return_value=[]), \
+             patch('auto_usage._load_antigravity_cache', return_value=[]), \
+             patch('auto_usage._save_antigravity_cache'):
             result = load_antigravity()
         assert all(v == {} for v in result.values())
         assert set(result.keys()) == {'gemini', 'anthropic', 'gpt_opencode', 'deepseek', 'opencode_other'}
@@ -320,7 +324,9 @@ class TestLoadAntigravity:
         }
         with patch('auto_usage._discover_antigravity_connections', return_value=[conn]), \
              patch('auto_usage.fetch_antigravity_trajectories', return_value=trajectories), \
-             patch('auto_usage._antigravity_rpc', return_value=usage_resp):
+             patch('auto_usage._antigravity_rpc', return_value=usage_resp), \
+             patch('auto_usage._load_antigravity_cache', return_value=[]), \
+             patch('auto_usage._save_antigravity_cache'):
             result = load_antigravity()
         # 1000 + 200 + 5000 = 6200 tokens on that date
         assert result['gemini'] != {}
@@ -344,11 +350,67 @@ class TestLoadAntigravity:
         }
         with patch('auto_usage._discover_antigravity_connections', return_value=[conn]), \
              patch('auto_usage.fetch_antigravity_trajectories', return_value=trajectories), \
-             patch('auto_usage._antigravity_rpc', return_value=usage_resp):
+             patch('auto_usage._antigravity_rpc', return_value=usage_resp), \
+             patch('auto_usage._load_antigravity_cache', return_value=[]), \
+             patch('auto_usage._save_antigravity_cache'):
             result = load_antigravity()
         # deduped: only counted once
         total = sum(result['gemini'].values())
         assert total == 1000
+
+    def test_cache_provides_data_when_ls_offline(self):
+        """When no LS is running, cached entries should still provide token data."""
+        cached = [
+            {"model": "gemini-3-flash-a", "timestamp": 1711447200000,
+             "input": 5000, "output": 500, "cache_read": 10000,
+             "cache_write": 0, "thinking": 100, "response_id": "cached-1",
+             "session_id": "old-session"},
+        ]
+        with patch('auto_usage._discover_antigravity_connections', return_value=[]), \
+             patch('auto_usage._load_antigravity_cache', return_value=cached), \
+             patch('auto_usage._save_antigravity_cache'):
+            result = load_antigravity()
+        total = sum(result['gemini'].values())
+        assert total == 15600  # 5000 + 500 + 10000 + 100
+
+    def test_cache_and_live_merged_with_dedup(self):
+        """Cache + live data should merge, with response_id dedup."""
+        cached = [
+            {"model": "gemini-3-flash-a", "timestamp": 1711447200000,
+             "input": 1000, "output": 0, "cache_read": 0,
+             "cache_write": 0, "thinking": 0, "response_id": "shared-id",
+             "session_id": "old"},
+        ]
+        conn = AntigravityConnection(pid=1, port=9999, csrf_token="x")
+        trajectories = [{"cascadeId": "sess-1"}]
+        usage_resp = {
+            "generatorMetadata": [
+                {
+                    "chatModel": {
+                        "responseModel": "gemini-3-flash-a",
+                        "retryInfos": [
+                            {"usage": {"inputTokens": 1000, "outputTokens": 0, "responseId": "shared-id", "timestamp": 1711447200000}},
+                            {"usage": {"inputTokens": 2000, "outputTokens": 0, "responseId": "new-id", "timestamp": 1711447200000}},
+                        ],
+                    }
+                }
+            ]
+        }
+        with patch('auto_usage._discover_antigravity_connections', return_value=[conn]), \
+             patch('auto_usage.fetch_antigravity_trajectories', return_value=trajectories), \
+             patch('auto_usage._antigravity_rpc', return_value=usage_resp), \
+             patch('auto_usage._load_antigravity_cache', return_value=cached), \
+             patch('auto_usage._save_antigravity_cache') as mock_save:
+            result = load_antigravity()
+        # shared-id deduped (1000 counted once), new-id added (2000)
+        total = sum(result['gemini'].values())
+        assert total == 3000
+        # verify cache was written with merged data
+        mock_save.assert_called_once()
+        saved_entries = mock_save.call_args[0][0]
+        saved_rids = {e['response_id'] for e in saved_entries if e.get('response_id')}
+        assert 'shared-id' in saved_rids
+        assert 'new-id' in saved_rids
 
 
 class TestCalcAntigravityCost:
