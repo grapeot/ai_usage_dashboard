@@ -1334,6 +1334,37 @@ def test_export_claude_code_quota_parses_usage_response(monkeypatch):
     assert '+00:00' not in (snapshots[1]['next_reset_iso'] or '')
 
 
+def test_export_claude_code_quota_accepts_percent_utilization(monkeypatch):
+    monkeypatch.setattr('auto_usage._read_claude_code_oauth_token', lambda: 'fake-token')
+
+    class FakeResp:
+        def raise_for_status(self): pass
+        def json(self):
+            return {
+                'five_hour': {'utilization': 63, 'resets_at': '2026-06-28T22:50:00.285042+00:00'},
+                'seven_day': {'utilization': 10, 'resets_at': '2026-07-05T10:00:00.285070+00:00'},
+            }
+    monkeypatch.setattr('auto_usage.requests.get', lambda *a, **kw: FakeResp())
+
+    snapshots = export_claude_code_quota()
+
+    assert snapshots[0]['percentage'] == 63
+    assert snapshots[1]['percentage'] == 10
+
+
+def test_export_claude_code_quota_clamps_out_of_range_percent(monkeypatch):
+    monkeypatch.setattr('auto_usage._read_claude_code_oauth_token', lambda: 'fake-token')
+
+    class FakeResp:
+        def raise_for_status(self): pass
+        def json(self): return {'five_hour': {'utilization': 101}}
+    monkeypatch.setattr('auto_usage.requests.get', lambda *a, **kw: FakeResp())
+
+    snapshots = export_claude_code_quota()
+
+    assert snapshots[0]['percentage'] == 100
+
+
 def test_export_claude_code_quota_returns_empty_when_no_token(monkeypatch):
     monkeypatch.setattr('auto_usage._read_claude_code_oauth_token', lambda: '')
     assert export_claude_code_quota() == []

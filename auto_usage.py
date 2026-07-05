@@ -1029,13 +1029,20 @@ def _iso_utc_to_epoch_ms(iso: str | None) -> int | None:
         return None
 
 
+def _normalize_usage_percentage(utilization: int | float) -> int:
+    """Normalize quota utilization from either ratio (0-1) or percent (0-100)."""
+    pct = utilization * 100 if utilization <= 1 else utilization
+    return max(0, min(100, int(round(pct))))
+
+
 def export_claude_code_quota() -> list[QuotaSnapshot]:
     """Fetch Claude Code plan quota from the Anthropic OAuth usage endpoint.
 
     Reads the OAuth token from the macOS Keychain and calls
     GET https://api.anthropic.com/api/oauth/usage. Returns [] when the token
-    is missing/expired or the API fails. utilization is a float 0-1; converted
-    to 0-100 percentage. Reset times are UTC ISO; converted to local.
+    is missing/expired or the API fails. utilization may be either a 0-1 ratio
+    or a 0-100 percentage; normalized to 0-100. Reset times are UTC ISO;
+    converted to local.
     """
     token = _read_claude_code_oauth_token()
     if not token:
@@ -1059,7 +1066,7 @@ def export_claude_code_quota() -> list[QuotaSnapshot]:
         snapshots.append({
             'provider': 'claude',
             'label': label,
-            'percentage': int(round(utilization * 100)),
+            'percentage': _normalize_usage_percentage(utilization),
             'next_reset_time_ms': _iso_utc_to_epoch_ms(resets_iso),
             'next_reset_iso': _iso_utc_to_local(resets_iso),
         })
