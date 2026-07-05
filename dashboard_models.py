@@ -117,3 +117,24 @@ class UpdateRequest(BaseModel):
     reason: str = Field(description='Why the refresh is requested, e.g. force_button.')
     view: str = Field(description='Requested view window, e.g. "7d" or "30d".')
     device_id: str = Field(description='Identifier of the device requesting the refresh.')
+
+
+class AntigravityIngestRequest(BaseModel):
+    """Request body for pushing Antigravity entries from a satellite machine.
+
+    Each entry follows the cache-entry shape used by
+    ``antigravity_usage_cache.json``: model, timestamp (epoch-ms), token
+    counts, and response_id for deduplication.
+    """
+
+    entries: list[dict] = Field(description='Antigravity usage entries from the satellite machine. Each entry should have: model, timestamp (epoch-ms int or ISO string), input, output, cache_read, cache_write, thinking, response_id, session_id.')
+    source: Optional[str] = Field(default=None, description='Optional label identifying the satellite machine, e.g. "macbook-air". Used for logging only.')
+
+
+class AntigravityIngestResponse(BaseModel):
+    """Response body for the Antigravity ingest endpoint."""
+
+    received: int = Field(description='Number of entries received in the request body.')
+    new: int = Field(description='Number of entries that were new (not already in cache).')
+    duplicate: int = Field(description='Number of entries that were already in cache (deduplicated by response_id).')
+    total_cache: int = Field(description='Total number of entries in the cache after this ingest.')

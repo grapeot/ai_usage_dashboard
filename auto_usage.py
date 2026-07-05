@@ -1029,13 +1029,20 @@ def _iso_utc_to_epoch_ms(iso: str | None) -> int | None:
         return None
 
 
+def _normalize_usage_percentage(utilization: int | float) -> int:
+    """Normalize quota utilization from either ratio (0-1) or percent (0-100)."""
+    pct = utilization * 100 if utilization <= 1 else utilization
+    return max(0, min(100, int(round(pct))))
+
+
 def export_claude_code_quota() -> list[QuotaSnapshot]:
     """Fetch Claude Code plan quota from the Anthropic OAuth usage endpoint.
 
     Reads the OAuth token from the macOS Keychain and calls
     GET https://api.anthropic.com/api/oauth/usage. Returns [] when the token
-    is missing/expired or the API fails. utilization is a float 0-1; converted
-    to 0-100 percentage. Reset times are UTC ISO; converted to local.
+    is missing/expired or the API fails. utilization may be either a 0-1 ratio
+    or a 0-100 percentage; normalized to 0-100. Reset times are UTC ISO;
+    converted to local.
     """
     token = _read_claude_code_oauth_token()
     if not token:
@@ -1059,7 +1066,7 @@ def export_claude_code_quota() -> list[QuotaSnapshot]:
         snapshots.append({
             'provider': 'claude',
             'label': label,
-            'percentage': int(round(utilization * 100)),
+            'percentage': _normalize_usage_percentage(utilization),
             'next_reset_time_ms': _iso_utc_to_epoch_ms(resets_iso),
             'next_reset_iso': _iso_utc_to_local(resets_iso),
         })
@@ -1782,6 +1789,55 @@ def _entry_total(entry: dict) -> int:
         + int(entry.get('cache_read', 0) or 0)
         + int(entry.get('cache_write', 0) or 0)
         + int(entry.get('thinking', 0) or 0)
+    )
+
+
+class IngestResult(TypedDict):
+    received: int
+    new: int
+    duplicate: int
+    total_cache: int
+
+
+def ingest_antigravity_entries(new_entries: list[dict]) -> IngestResult:
+    """Merge externally-pushed entries into the local Antigravity cache.
+
+    Reads the current cache, deduplicates by response_id (entries already in
+    cache are counted as duplicate), appends new entries, and writes the
+    merged set back to cache. Intended for cross-machine push: a satellite
+    machine sends its entries to the dashboard host's
+    ``POST /api/v1/antigravity/ingest`` endpoint, which calls this function.
+
+    Entries without a response_id are always appended (never considered
+    duplicate). The cache is not cleared on failure; partial writes are
+    avoided by building the full merged list before opening the file.
+    """
+    cached = _load_antigravity_cache()
+    seen: set[str] = set()
+    for e in cached:
+        rid = e.get('response_id')
+        if rid:
+            seen.add(rid)
+
+    merged = list(cached)
+    new_count = 0
+    dup_count = 0
+    for e in new_entries:
+        rid = e.get('response_id')
+        if rid and rid in seen:
+            dup_count += 1
+            continue
+        if rid:
+            seen.add(rid)
+        merged.append(e)
+        new_count += 1
+
+    _save_antigravity_cache(merged)
+    return IngestResult(
+        received=len(new_entries),
+        new=new_count,
+        duplicate=dup_count,
+        total_cache=len(merged),
     )
 
 

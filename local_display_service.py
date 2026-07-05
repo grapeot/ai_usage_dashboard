@@ -5,8 +5,10 @@ from typing import Any
 
 from fastapi import FastAPI
 
-from auto_usage import build_latest_dashboard_payload
+from auto_usage import build_latest_dashboard_payload, ingest_antigravity_entries
 from dashboard_models import (
+    AntigravityIngestRequest,
+    AntigravityIngestResponse,
     DashboardPayload,
     HealthResponse,
     UpdateRequest,
@@ -91,3 +93,16 @@ def display_update(request: UpdateRequest) -> dict[str, Any]:
             return _cached_payload
         raise
     return _cached_payload
+
+
+@app.post(
+    "/api/v1/antigravity/ingest",
+    response_model=AntigravityIngestResponse,
+    summary="Push Antigravity entries from a satellite machine",
+    description="Receives Antigravity usage entries from a satellite machine (e.g. a laptop over Tailscale), deduplicates by response_id against the local cache, and persists the merged set. Intended for cross-machine aggregation: the dashboard host runs this endpoint, and the satellite uses scripts/push-antigravity to POST its entries.",
+)
+def antigravity_ingest(request: AntigravityIngestRequest) -> dict[str, Any]:
+    result = ingest_antigravity_entries(request.entries)
+    if request.source:
+        print(f"Antigravity ingest from {request.source}: received={result['received']} new={result['new']} dup={result['duplicate']} total={result['total_cache']}")
+    return result
