@@ -1,0 +1,79 @@
+#!/usr/bin/env python3
+"""Push local Antigravity usage entries to the dashboard host.
+
+Runs on a satellite machine (e.g. a laptop over Tailscale). Triggers a local
+load_antigravity() to refresh the cache from any running Language Server, then
+reads the cache and POSTs all entries to the dashboard host's ingest endpoint.
+
+Configuration (in .env):
+  AI_USAGE_DASHBOARD_INGEST_URL — full URL of the dashboard host's ingest
+      endpoint, e.g. http://<host>.<tailnet>.ts.net:7995/api/v1/antigravity/ingest
+  AI_USAGE_SATELLITE_NAME — optional label for the satellite machine, used
+      for logging on the host side.
+
+Usage:
+  .venv/bin/python scripts/push-antigravity
+  .venv/bin/python scripts/push-antigravity --dry-run   # print what would be sent
+"""
+import argparse
+import json
+import os
+import sys
+from pathlib import Path
+
+import requests
+
+SCRIPT_DIR = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(SCRIPT_DIR))
+
+
+def load_env():
+    env_path = SCRIPT_DIR / '.env'
+    if env_path.exists():
+        with open(env_path) as f:
+            for line in f:
+                line = line.strip()
+                if line and not line.startswith('#') and '=' in line:
+                    key, value = line.split('=', 1)
+                    if key not in os.environ:
+                        os.environ[key] = value
+
+
+def main():
+    load_env()
+    parser = argparse.ArgumentParser(description='Push local Antigravity entries to the dashboard host.')
+    parser.add_argument('--dry-run', action='store_true', help='Print what would be sent without POSTing.')
+    parser.add_argument('--url', type=str, help='Override AI_USAGE_DASHBOARD_INGEST_URL.')
+    args = parser.parse_args()
+
+    ingest_url = args.url or os.environ.get('AI_USAGE_DASHBOARD_INGEST_URL', '').strip()
+    if not ingest_url:
+        print('Error: AI_USAGE_DASHBOARD_INGEST_URL is not set. Add it to .env or pass --url.', file=sys.stderr)
+        sys.exit(1)
+
+    from auto_usage import load_antigravity, ANTIGRAVITY_CACHE_FILE, _load_antigravity_cache
+
+    print('Refreshing local Antigravity cache from live Language Server...')
+    load_antigravity()
+
+    entries = _load_antigravity_cache()
+    print(f'Local cache has {len(entries)} entries.')
+
+    if args.dry_run:
+        print(f'[dry-run] Would POST {len(entries)} entries to {ingest_url}')
+        return
+
+    source = os.environ.get('AI_USAGE_SATELLITE_NAME', '') or None
+    print(f'POSTing {len(entries)} entries to {ingest_url}...')
+    resp = requests.post(
+        ingest_url,
+        json={'entries': entries, 'source': source},
+        timeout=30,
+    )
+    resp.raise_for_status()
+    body = resp.json()
+    print(f'Result: received={body["received"]} new={body["new"]} duplicate={body["duplicate"]} total_cache={body["total_cache"]}')
+
+
+if __name__ == '__main__':
+    main()

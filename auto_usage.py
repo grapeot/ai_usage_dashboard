@@ -1785,6 +1785,55 @@ def _entry_total(entry: dict) -> int:
     )
 
 
+class IngestResult(TypedDict):
+    received: int
+    new: int
+    duplicate: int
+    total_cache: int
+
+
+def ingest_antigravity_entries(new_entries: list[dict]) -> IngestResult:
+    """Merge externally-pushed entries into the local Antigravity cache.
+
+    Reads the current cache, deduplicates by response_id (entries already in
+    cache are counted as duplicate), appends new entries, and writes the
+    merged set back to cache. Intended for cross-machine push: a satellite
+    machine sends its entries to the dashboard host's
+    ``POST /api/v1/antigravity/ingest`` endpoint, which calls this function.
+
+    Entries without a response_id are always appended (never considered
+    duplicate). The cache is not cleared on failure; partial writes are
+    avoided by building the full merged list before opening the file.
+    """
+    cached = _load_antigravity_cache()
+    seen: set[str] = set()
+    for e in cached:
+        rid = e.get('response_id')
+        if rid:
+            seen.add(rid)
+
+    merged = list(cached)
+    new_count = 0
+    dup_count = 0
+    for e in new_entries:
+        rid = e.get('response_id')
+        if rid and rid in seen:
+            dup_count += 1
+            continue
+        if rid:
+            seen.add(rid)
+        merged.append(e)
+        new_count += 1
+
+    _save_antigravity_cache(merged)
+    return IngestResult(
+        received=len(new_entries),
+        new=new_count,
+        duplicate=dup_count,
+        total_cache=len(merged),
+    )
+
+
 def load_antigravity() -> dict[str, DailyTokens]:
     """Load Antigravity IDE token usage from cache + live Language Server.
 

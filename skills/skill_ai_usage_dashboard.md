@@ -70,11 +70,13 @@ The FastAPI service exposes:
 GET  /health
 GET  /token_usage.json
 POST /api/v1/display/update
+POST /api/v1/antigravity/ingest
 ```
 
 Responses are typed by Pydantic models in `dashboard_models.py`
 (`DashboardPayload`, `DashboardSummary`, `DailyEntry`, `GlmQuotaSnapshot`,
-`HealthResponse`, `UpdateRequest`). Every field carries a description, so
+`HealthResponse`, `UpdateRequest`, `AntigravityIngestRequest`,
+`AntigravityIngestResponse`). Every field carries a description, so
 `/openapi.json` is self-describing for AI agents: the response schema for
 `/token_usage.json` is a `$ref` to `DashboardPayload` rather than an opaque
 object.
@@ -90,6 +92,22 @@ object.
 ```
 
 It returns the same dashboard JSON shape used by `token_usage_eink.json`: `meta`, `summary`, and `daily`.
+
+`POST /api/v1/antigravity/ingest` accepts:
+
+```json
+{
+  "entries": [
+    {"model": "gemini-3-flash-a", "timestamp": 1711447200000,
+     "input": 1000, "output": 200, "cache_read": 5000,
+     "cache_write": 0, "thinking": 50, "response_id": "r1",
+     "session_id": "s1"}
+  ],
+  "source": "macbook-air"
+}
+```
+
+It deduplicates by `response_id` against the local `antigravity_usage_cache.json`, persists the merged set, and returns `{"received": N, "new": M, "duplicate": K, "total_cache": T}`. Intended for cross-machine aggregation — see `skills/skill_antigravity_push.md` for the satellite-side workflow.
 
 ## E-Ink Reference Implementation
 

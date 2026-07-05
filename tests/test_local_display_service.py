@@ -129,3 +129,64 @@ def test_post_update_returns_cached_payload_when_refresh_fails(monkeypatch):
     body = response.json()
     assert body["summary"]["total_tokens"] == 7
     assert body["daily"] == []
+
+
+def test_post_antigravity_ingest_accepts_entries(monkeypatch, tmp_path):
+    cache_path = tmp_path / "antigravity_usage_cache.json"
+    monkeypatch.setattr("auto_usage.ANTIGRAVITY_CACHE_FILE", str(cache_path))
+
+    client = TestClient(local_display_service.app)
+    entries = [
+        {"model": "gemini-3-flash-a", "timestamp": 1711447200000,
+         "input": 1000, "output": 200, "cache_read": 5000,
+         "cache_write": 0, "thinking": 50, "response_id": "r1",
+         "session_id": "s1"},
+    ]
+    response = client.post(
+        "/api/v1/antigravity/ingest",
+        json={"entries": entries, "source": "macbook-air"},
+    )
+    assert response.status_code == 200
+    body = response.json()
+    assert body["received"] == 1
+    assert body["new"] == 1
+    assert body["duplicate"] == 0
+    assert body["total_cache"] == 1
+
+
+def test_post_antigravity_ingest_deduplicates_existing_entries(monkeypatch, tmp_path):
+    cache_path = tmp_path / "antigravity_usage_cache.json"
+    monkeypatch.setattr("auto_usage.ANTIGRAVITY_CACHE_FILE", str(cache_path))
+
+    client = TestClient(local_display_service.app)
+    entries = [
+        {"model": "gemini-3-flash-a", "timestamp": 1711447200000,
+         "input": 1000, "response_id": "dup-1", "session_id": "s1"},
+    ]
+    # First push
+    client.post("/api/v1/antigravity/ingest", json={"entries": entries})
+    # Second push (same response_id)
+    response = client.post("/api/v1/antigravity/ingest", json={"entries": entries})
+    assert response.status_code == 200
+    body = response.json()
+    assert body["received"] == 1
+    assert body["new"] == 0
+    assert body["duplicate"] == 1
+    assert body["total_cache"] == 1
+
+
+def test_post_antigravity_ingest_accepts_empty_entries(monkeypatch, tmp_path):
+    cache_path = tmp_path / "antigravity_usage_cache.json"
+    monkeypatch.setattr("auto_usage.ANTIGRAVITY_CACHE_FILE", str(cache_path))
+
+    client = TestClient(local_display_service.app)
+    response = client.post(
+        "/api/v1/antigravity/ingest",
+        json={"entries": [], "source": "macbook-air"},
+    )
+    assert response.status_code == 200
+    body = response.json()
+    assert body["received"] == 0
+    assert body["new"] == 0
+    assert body["duplicate"] == 0
+    assert body["total_cache"] == 0
