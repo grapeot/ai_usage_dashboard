@@ -706,3 +706,50 @@ After: it is `{"$ref": "#/components/schemas/DashboardPayload"}` and
 `components/schemas` lists every model with per-field descriptions. An AI agent
 can read the spec and understand `glm_quota[].next_reset_iso`,
 `summary.total_ai_hours`, and every other field without reading source.
+
+## 17. Automation Quota Endpoint
+
+### 17.1 Contract
+
+`GET /api/v1/quotas` returns a compact `QuotasResponse`:
+
+```json
+{
+  "generated_at": "2026-07-11T22:47:45",
+  "quotas": [
+    {
+      "provider": "codex",
+      "label": "5h",
+      "used_percentage": 29,
+      "remaining_percentage": 71,
+      "next_reset_time_ms": 1783842841000,
+      "next_reset_iso": "2026-07-12T00:54:01",
+      "usage": null,
+      "remaining": null
+    }
+  ]
+}
+```
+
+`used_percentage` is clamped to `0..100`; `remaining_percentage` is calculated
+as `100 - used_percentage`. `usage` and `remaining` are absolute counts and
+remain null when the provider exposes only percentages.
+
+### 17.2 Cache Semantics
+
+The endpoint projects `payload.quotas` from the in-memory cache, falling back to
+the on-disk `token_usage_eink.json`. It never calls providers or triggers a full
+dashboard generation. If neither cache exists, it returns `generated_at: null`
+and an empty `quotas` array. Clients that require fresh provider data must first
+call `POST /api/v1/display/update`.
+
+### 17.3 OpenAPI Models
+
+- `AutomationQuotaSnapshot` documents one automation-oriented quota window.
+- `QuotasResponse` contains `generated_at` and the quota array.
+- Both models require descriptions on every serialized field.
+
+### 17.4 Compatibility
+
+This is an additive endpoint. It does not alter the existing unified `quotas`
+array in `DashboardPayload` or the e-ink JSON contract.

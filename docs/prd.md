@@ -160,6 +160,29 @@ The bottom chart uses one bar per day in V1.
 - Daily window counts and longest window.
 - Source-level active time breakdown.
 
+## 12. Automation Quota API
+
+### Goal
+
+Provide a compact, stable endpoint for agents and scripts that need current
+provider quota state without downloading the full 30-day dashboard payload.
+
+### Requirements
+
+- Expose `GET /api/v1/quotas` without authentication on the existing local-only service.
+- Return the dashboard snapshot generation time and all available provider quota windows.
+- Return both used and remaining percentages explicitly so consumers do not need to reinterpret `percentage`.
+- Return reset time as epoch milliseconds and local ISO when the provider exposes it.
+- Preserve absolute `usage` and `remaining` counts when available.
+- Reuse the current dashboard cache; a quota read must not trigger provider requests or a full usage refresh.
+- Return an empty `quotas` array when no provider quota is available.
+
+### Success Criteria
+
+- An automation client can determine remaining percentage and reset time with one GET request.
+- `/openapi.json` describes the response through a concrete Pydantic schema.
+- Existing `/token_usage.json` and `/api/v1/display/update` behavior remains unchanged.
+
 ## Appendix C: Google Antigravity IDE Token Usage
 
 ### Background

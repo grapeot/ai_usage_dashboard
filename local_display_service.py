@@ -11,6 +11,7 @@ from dashboard_models import (
     AntigravityIngestResponse,
     DashboardPayload,
     HealthResponse,
+    QuotasResponse,
     UpdateRequest,
 )
 
@@ -72,6 +73,40 @@ def health() -> dict[str, Any]:
 )
 def token_usage_json() -> dict[str, Any]:
     return read_cached_payload()
+
+
+@app.get(
+    "/api/v1/quotas",
+    response_model=QuotasResponse,
+    summary="Return current provider quota windows",
+    description="Returns a compact automation-oriented view of cached provider quotas, including used and remaining percentages plus reset timestamps. This endpoint reuses the dashboard cache and does not force provider refreshes.",
+)
+def quotas() -> dict[str, Any]:
+    global _cached_payload
+    payload = _cached_payload
+    if payload is None:
+        payload = _read_payload_from_disk()
+        if payload is not None:
+            _cached_payload = payload
+    if payload is None:
+        payload = {"meta": {}, "quotas": []}
+    quota_items = []
+    for item in payload.get("quotas") or []:
+        used_percentage = max(0, min(100, int(item.get("percentage", 0) or 0)))
+        quota_items.append({
+            "provider": item.get("provider", "unknown"),
+            "label": item.get("label", "unknown"),
+            "used_percentage": used_percentage,
+            "remaining_percentage": 100 - used_percentage,
+            "next_reset_time_ms": item.get("next_reset_time_ms"),
+            "next_reset_iso": item.get("next_reset_iso"),
+            "usage": item.get("usage"),
+            "remaining": item.get("remaining"),
+        })
+    return {
+        "generated_at": (payload.get("meta") or {}).get("generated_at"),
+        "quotas": quota_items,
+    }
 
 
 @app.post(
