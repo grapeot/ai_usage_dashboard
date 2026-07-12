@@ -93,6 +93,26 @@ class QuotaSnapshot(BaseModel):
     remaining: Optional[int] = Field(default=None, description='Remaining count before the window resets. Present only for the GLM monthly tool quota.')
 
 
+class AutomationQuotaSnapshot(BaseModel):
+    """Automation-oriented view of one provider quota window."""
+
+    provider: str = Field(description='Provider name, e.g. glm, codex, ollama, claude, or antigravity.')
+    label: str = Field(description='Human-readable quota window label, e.g. "5h", "7d", or "Gemini 5h".')
+    used_percentage: int = Field(description='Percentage of the quota window already used (0-100).')
+    remaining_percentage: int = Field(description='Percentage of the quota window remaining (0-100), calculated as 100 minus used_percentage.')
+    next_reset_time_ms: Optional[int] = Field(default=None, description='Epoch-millisecond timestamp at which the quota window resets. May be absent.')
+    next_reset_iso: Optional[str] = Field(default=None, description='Local ISO timestamp at which the quota window resets. May be absent.')
+    usage: Optional[int] = Field(default=None, description='Absolute count already used when the upstream provider exposes it.')
+    remaining: Optional[int] = Field(default=None, description='Absolute count remaining when the upstream provider exposes it.')
+
+
+class QuotasResponse(BaseModel):
+    """Compact quota response intended for scripts and agents."""
+
+    generated_at: Optional[str] = Field(default=None, description='Generation time of the cached dashboard snapshot in local ISO format.')
+    quotas: list[AutomationQuotaSnapshot] = Field(default_factory=list, description='Current quota windows across all available providers.')
+
+
 class DashboardPayload(BaseModel):
     """Full dashboard payload served by the local API and written to token_usage_eink.json."""
 

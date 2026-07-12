@@ -7,10 +7,12 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from dashboard_models import (
+    AutomationQuotaSnapshot,
     DashboardPayload,
     GlmQuotaSnapshot,
     HealthResponse,
     QuotaSnapshot,
+    QuotasResponse,
     UpdateRequest,
 )
 
@@ -129,7 +131,7 @@ def test_update_request_model_validates_required_fields():
 
 def test_model_fields_carry_descriptions_for_openapi():
     """Every serialized field must have a description so /openapi.json is AI-readable."""
-    for model_cls in (DashboardPayload, GlmQuotaSnapshot, QuotaSnapshot, HealthResponse, UpdateRequest):
+    for model_cls in (DashboardPayload, GlmQuotaSnapshot, QuotaSnapshot, AutomationQuotaSnapshot, QuotasResponse, HealthResponse, UpdateRequest):
         for name, field in model_cls.model_fields.items():
             assert field.description, f'{model_cls.__name__}.{name} missing description'
 
@@ -162,3 +164,18 @@ def test_dashboard_payload_includes_unified_quotas():
     assert payload.quotas is not None
     assert len(payload.quotas) == 2
     assert payload.quotas[1].provider == 'codex'
+
+
+def test_quotas_response_requires_explicit_automation_percentages():
+    response = QuotasResponse.model_validate({
+        'generated_at': '2026-07-11T22:47:45',
+        'quotas': [{
+            'provider': 'codex',
+            'label': '5h',
+            'used_percentage': 29,
+            'remaining_percentage': 71,
+        }],
+    })
+
+    assert response.quotas[0].used_percentage == 29
+    assert response.quotas[0].remaining_percentage == 71

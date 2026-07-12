@@ -69,17 +69,23 @@ The FastAPI service exposes:
 ```text
 GET  /health
 GET  /token_usage.json
+GET  /api/v1/quotas
 POST /api/v1/display/update
 POST /api/v1/antigravity/ingest
 ```
 
 Responses are typed by Pydantic models in `dashboard_models.py`
 (`DashboardPayload`, `DashboardSummary`, `DailyEntry`, `GlmQuotaSnapshot`,
-`HealthResponse`, `UpdateRequest`, `AntigravityIngestRequest`,
+`QuotaSnapshot`, `AutomationQuotaSnapshot`, `QuotasResponse`, `HealthResponse`, `UpdateRequest`, `AntigravityIngestRequest`,
 `AntigravityIngestResponse`). Every field carries a description, so
 `/openapi.json` is self-describing for AI agents: the response schema for
 `/token_usage.json` is a `$ref` to `DashboardPayload` rather than an opaque
 object.
+
+`GET /api/v1/quotas` is intended for scripts and agents. It returns cached
+quota windows with explicit `used_percentage`, `remaining_percentage`, and
+reset timestamps. It does not force a provider refresh; call
+`POST /api/v1/display/update` first when freshness is required.
 
 `POST /api/v1/display/update` accepts:
 
