@@ -17,7 +17,7 @@ from dashboard_models import (
 
 app = FastAPI(
     title="ai_usage_dashboard",
-    description="Local API for the AI Usage Dashboard. Aggregates token usage, AI active time, USD cost, and the GLM/Z.ai coding-plan quota snapshot from local logs and the Z.ai usage API.",
+    description="Local API for the AI Usage Dashboard. Aggregates token usage, AI active time, USD cost, and unified provider quota snapshots. Includes a compact cache-only quota endpoint for automation clients.",
     version="0.1.0",
 )
 
