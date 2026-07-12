@@ -82,10 +82,62 @@ Responses are typed by Pydantic models in `dashboard_models.py`
 `/token_usage.json` is a `$ref` to `DashboardPayload` rather than an opaque
 object.
 
-`GET /api/v1/quotas` is intended for scripts and agents. It returns cached
-quota windows with explicit `used_percentage`, `remaining_percentage`, and
-reset timestamps. It does not force a provider refresh; call
-`POST /api/v1/display/update` first when freshness is required.
+### Quota Automation
+
+Use `GET /api/v1/quotas` when the user or an automation needs only current
+quota availability and reset times. Do not download `/token_usage.json` and
+manually extract `quotas` for this use case.
+
+```bash
+curl -s http://127.0.0.1:7995/api/v1/quotas
+```
+
+Response shape:
+
+```json
+{
+  "generated_at": "2026-07-11T22:57:55",
+  "quotas": [
+    {
+      "provider": "codex",
+      "label": "5h",
+      "used_percentage": 29,
+      "remaining_percentage": 71,
+      "next_reset_time_ms": 1783842841000,
+      "next_reset_iso": "2026-07-12T00:54:01",
+      "usage": null,
+      "remaining": null
+    }
+  ]
+}
+```
+
+Interpretation:
+
+- `used_percentage` and `remaining_percentage` always sum to 100.
+- `next_reset_time_ms` is the machine-friendly epoch-millisecond reset time.
+- `next_reset_iso` is the same reset in local ISO form.
+- `usage` and `remaining` are absolute counts only when the provider exposes
+  them; null does not mean zero.
+- `generated_at` identifies snapshot freshness.
+
+This endpoint is strictly cache-only. It reads the in-memory dashboard snapshot
+or `token_usage_eink.json` and never contacts providers. If neither cache exists,
+it returns `{"generated_at": null, "quotas": []}`. An empty array therefore
+means no cached quota snapshot, not necessarily that the account has no quota.
+
+When the user explicitly needs fresh provider data, refresh once and then read
+the compact endpoint:
+
+```bash
+curl -s -X POST http://127.0.0.1:7995/api/v1/display/update \
+  -H 'Content-Type: application/json' \
+  -d '{"reason":"automation","view":"30d","device_id":"local"}' >/dev/null
+curl -s http://127.0.0.1:7995/api/v1/quotas
+```
+
+For routine polling, use only `GET /api/v1/quotas`; do not force a full refresh
+on every poll.
 
 `POST /api/v1/display/update` accepts:
 
