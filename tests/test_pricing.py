@@ -9,6 +9,9 @@ from pricing_config import get_pricing, calc_cost
 
 class TestGetPricing:
     def test_direct_match(self):
+        assert get_pricing("gpt-5.6-sol") == {"input": 5.0, "cached": 0.5, "cache_write": 6.25, "output": 30.0}
+        assert get_pricing("gpt-5.6-terra") == {"input": 2.5, "cached": 0.25, "cache_write": 3.125, "output": 15.0}
+        assert get_pricing("gpt-5.6-luna") == {"input": 1.0, "cached": 0.1, "cache_write": 1.25, "output": 6.0}
         assert get_pricing("gpt-5.5") == {"input": 5.0, "cached": 0.5, "output": 30.0}
         assert get_pricing("gpt-5.4") == {"input": 2.5, "cached": 0.25, "output": 15.0}
         assert get_pricing("gpt-5.4-mini") == {"input": 0.75, "cached": 0.075, "output": 4.5}
@@ -106,3 +109,8 @@ class TestCalcCost:
         )
         expected = (0.1 * 3.0) + (0.2 * 0.3) + (0.05 * 3.75) + (0.025 * 6.0) + (0.1 * 15.0)
         assert abs(cost - expected) < 0.01
+
+    def test_gpt_5_6_cache_write_rate(self):
+        p = get_pricing("gpt-5.6-sol")
+        cost = calc_cost(p, input_tokens=0, cache_write_tokens=1_000_000)
+        assert cost == 6.25
