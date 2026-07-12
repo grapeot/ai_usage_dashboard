@@ -2,6 +2,9 @@ from datetime import datetime
 import json
 from pathlib import Path
 import sys
+import threading
+import time
+from concurrent.futures import ThreadPoolExecutor
 
 from fastapi.testclient import TestClient
 
@@ -191,6 +194,55 @@ def test_post_update_returns_fresh_dashboard_shape(monkeypatch):
     assert body["summary"]["total_tokens"] == 42
     assert body["daily"][0]["date"] == "2026-04-01"
     assert body["daily"][0]["total_tokens"] == 42
+
+
+def test_post_update_serializes_concurrent_refreshes(monkeypatch):
+    state_lock = threading.Lock()
+    first_started = threading.Event()
+    release_first = threading.Event()
+    active = 0
+    max_active = 0
+    call_count = 0
+
+    def generate():
+        nonlocal active, max_active, call_count
+        with state_lock:
+            active += 1
+            max_active = max(max_active, active)
+            call_count += 1
+            current_call = call_count
+        if current_call == 1:
+            first_started.set()
+            assert release_first.wait(timeout=2)
+        with state_lock:
+            active -= 1
+        return {
+            "meta": {"version": 1, "generated_at": f"refresh-{current_call}"},
+            "summary": {"total_tokens": current_call},
+            "daily": [],
+        }
+
+    monkeypatch.setattr(local_display_service, "_cached_payload", None)
+    monkeypatch.setattr(local_display_service, "generate_latest_payload", generate)
+    request = local_display_service.UpdateRequest(
+        reason="force_button",
+        view="7d",
+        device_id="example-device",
+    )
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        first = executor.submit(local_display_service.display_update, request)
+        assert first_started.wait(timeout=2)
+        second = executor.submit(local_display_service.display_update, request)
+        time.sleep(0.05)
+        with state_lock:
+            assert call_count == 1
+        release_first.set()
+        first.result(timeout=2)
+        second.result(timeout=2)
+
+    assert call_count == 2
+    assert max_active == 1
 
 
 def test_get_token_usage_json_falls_back_to_disk_when_refresh_fails(monkeypatch, tmp_path):

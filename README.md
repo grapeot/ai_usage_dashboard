@@ -71,6 +71,11 @@ provider window's used and remaining percentages plus reset timestamps, without
 forcing a provider refresh. Call `POST /api/v1/display/update` first when fresh
 provider data is required.
 
+Full refreshes are serialized inside the API process because collection updates
+shared cache files. If multiple clients call `POST /api/v1/display/update` at the
+same time, later requests wait for the active refresh before running. Cached GET
+requests remain read-only and do not acquire the refresh lock.
+
 If a LAN device needs access, configure the host through private local config or your own launch script. Do not commit fixed private IP addresses.
 
 ## Data Sources

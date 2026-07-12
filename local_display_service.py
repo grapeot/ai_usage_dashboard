@@ -1,6 +1,7 @@
 from datetime import datetime
 import json
 from pathlib import Path
+import threading
 from typing import Any
 
 from fastapi import FastAPI
@@ -23,6 +24,7 @@ app = FastAPI(
 
 _cached_payload: dict[str, Any] | None = None
 _payload_path = Path(__file__).resolve().parent / "token_usage_eink.json"
+_refresh_lock = threading.Lock()
 
 
 def _read_payload_from_disk() -> dict[str, Any] | None:
@@ -117,17 +119,19 @@ def quotas() -> dict[str, Any]:
 )
 def display_update(request: UpdateRequest) -> dict[str, Any]:
     global _cached_payload
-    try:
-        _cached_payload = generate_latest_payload()
-    except Exception:
-        if _cached_payload is not None:
-            return _cached_payload
-        disk_payload = _read_payload_from_disk()
-        if disk_payload is not None:
-            _cached_payload = disk_payload
-            return _cached_payload
-        raise
-    return _cached_payload
+    # Collection writes shared cache files, so refreshes must not overlap.
+    with _refresh_lock:
+        try:
+            _cached_payload = generate_latest_payload()
+        except Exception:
+            if _cached_payload is not None:
+                return _cached_payload
+            disk_payload = _read_payload_from_disk()
+            if disk_payload is not None:
+                _cached_payload = disk_payload
+                return _cached_payload
+            raise
+        return _cached_payload
 
 
 @app.post(
