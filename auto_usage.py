@@ -1868,13 +1868,55 @@ def load_antigravity() -> dict[str, DailyTokens]:
             seen_response_ids.add(rid)
 
     # 2. Fetch live data from LS
+    # Build a list of cascade IDs to query. We scan local conversation databases
+    # on disk and check if we have fewer cached entries for them than there are
+    # generations (rows in gen_metadata table) in the DB.
+    import glob
+    cache_counts: dict[str, int] = defaultdict(int)
+    for e in cached:
+        sid = e.get('session_id')
+        if sid:
+            cache_counts[sid] += 1
+
+    db_dirs = [
+        os.path.expanduser('~/.gemini/antigravity-ide/conversations'),
+        os.path.expanduser('~/.gemini/antigravity/conversations'),
+    ]
+    discovered_cascades: dict[str, int] = {}
+    for ddir in db_dirs:
+        if not os.path.exists(ddir):
+            continue
+        for db_path in glob.glob(os.path.join(ddir, '*.db')):
+            cid = os.path.splitext(os.path.basename(db_path))[0]
+            try:
+                conn = sqlite3.connect(db_path)
+                cursor = conn.cursor()
+                cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='gen_metadata';")
+                if cursor.fetchone():
+                    cursor.execute("SELECT COUNT(*) FROM gen_metadata;")
+                    row = cursor.fetchone()
+                    if row:
+                        discovered_cascades[cid] = row[0]
+                conn.close()
+            except Exception:
+                pass
+
+    to_query: set[str] = set()
+    for cid, db_count in discovered_cascades.items():
+        if cache_counts[cid] < db_count:
+            to_query.add(cid)
+
     connections = _discover_antigravity_connections()
     if connections:
+        # Also query active trajectories returned by running LS
         trajectories = fetch_antigravity_trajectories(connections)
         for summary in trajectories:
             cid = summary.get('cascadeId') or summary.get('trajectoryId') or summary.get('id')
-            if not cid:
-                continue
+            if cid:
+                to_query.add(cid)
+
+        # Query metadata for all out-of-date or active cascade IDs
+        for cid in sorted(to_query):
             for conn in connections:
                 resp = _antigravity_rpc(conn, 'GetCascadeTrajectoryGeneratorMetadata', {'cascadeId': cid})
                 if not resp:
