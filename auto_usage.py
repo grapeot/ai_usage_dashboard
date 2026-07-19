@@ -1680,7 +1680,7 @@ def parse_antigravity_usage_response(
         return []
 
     entries: list[dict] = []
-    for m in meta:
+    for gen_idx, m in enumerate(meta):
         if not isinstance(m, dict):
             continue
         cm = m.get('chatModel', m)
@@ -1719,11 +1719,36 @@ def parse_antigravity_usage_response(
                 'thinking': th,
                 'response_id': u.get('responseId'),
                 'session_id': session_id,
+                'gen_idx': gen_idx,
             })
     return entries
 
 
 ANTIGRAVITY_CACHE_FILE = os.path.join(SCRIPT_DIR, 'antigravity_usage_cache.json')
+ANTIGRAVITY_SYNC_METADATA_FILE = os.path.join(SCRIPT_DIR, 'antigravity_sync_metadata.json')
+
+
+def _load_antigravity_sync_metadata() -> dict[str, list[int]]:
+    """Load Antigravity session sync metadata (mapping session_id to list of synced gen_idx)."""
+    if not os.path.exists(ANTIGRAVITY_SYNC_METADATA_FILE):
+        return {}
+    try:
+        with open(ANTIGRAVITY_SYNC_METADATA_FILE, 'r', encoding='utf-8') as f:
+            data = json.load(f)
+            if isinstance(data, dict):
+                return {k: list(v) for k, v in data.items() if isinstance(v, list)}
+    except Exception:
+        pass
+    return {}
+
+
+def _save_antigravity_sync_metadata(metadata: dict[str, list[int]]) -> None:
+    """Save Antigravity session sync metadata to disk."""
+    try:
+        with open(ANTIGRAVITY_SYNC_METADATA_FILE, 'w', encoding='utf-8') as f:
+            json.dump(metadata, f, indent=2)
+    except Exception:
+        pass
 
 
 def _load_antigravity_cache() -> list[dict]:
@@ -1868,13 +1893,58 @@ def load_antigravity() -> dict[str, DailyTokens]:
             seen_response_ids.add(rid)
 
     # 2. Fetch live data from LS
+    # Build a list of cascade IDs to query. We scan local conversation databases
+    # on disk and check if we are missing any generation indices in our cache.
+    import glob
+    import sys
+    
+    sync_meta = _load_antigravity_sync_metadata()
+    cascades_in_cache = {e.get('session_id') for e in cached if e.get('session_id')}
+    sync_meta_updated = False
+
+    db_dirs = [
+        os.path.expanduser('~/.gemini/antigravity-ide/conversations'),
+        os.path.expanduser('~/.gemini/antigravity/conversations'),
+    ]
+    discovered_cascades: dict[str, set[int]] = {}
+    for ddir in db_dirs:
+        if not os.path.exists(ddir):
+            continue
+        for db_path in glob.glob(os.path.join(ddir, '*.db')):
+            cid = os.path.splitext(os.path.basename(db_path))[0]
+            conn = None
+            try:
+                # Open SQLite with mode=ro via URI for safety
+                conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
+                cursor = conn.cursor()
+                cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='gen_metadata';")
+                if cursor.fetchone():
+                    cursor.execute("SELECT idx FROM gen_metadata;")
+                    rows = cursor.fetchall()
+                    discovered_cascades[cid] = {int(r[0]) for r in rows if r[0] is not None}
+            except Exception as err:
+                print(f"Warning: Failed to scan Antigravity DB {db_path}: {err}", file=sys.stderr)
+            finally:
+                if conn:
+                    conn.close()
+
+    to_query: set[str] = set()
+    for cid, db_indices in discovered_cascades.items():
+        cached_indices = set(sync_meta.get(cid, []))
+        if not db_indices.issubset(cached_indices):
+            to_query.add(cid)
+
     connections = _discover_antigravity_connections()
     if connections:
+        # Also query active trajectories returned by running LS
         trajectories = fetch_antigravity_trajectories(connections)
         for summary in trajectories:
             cid = summary.get('cascadeId') or summary.get('trajectoryId') or summary.get('id')
-            if not cid:
-                continue
+            if cid:
+                to_query.add(cid)
+
+        # Query metadata for all out-of-date or active cascade IDs
+        for cid in sorted(to_query):
             for conn in connections:
                 resp = _antigravity_rpc(conn, 'GetCascadeTrajectoryGeneratorMetadata', {'cascadeId': cid})
                 if not resp:
@@ -1897,13 +1967,22 @@ def load_antigravity() -> dict[str, DailyTokens]:
                         'thinking': e['thinking'],
                         'response_id': e.get('response_id'),
                         'session_id': e.get('session_id'),
+                        'gen_idx': e.get('gen_idx'),
                     }
                     all_entries.append(cache_entry)
+                
+                # Mark as fully synchronized up to the current count of generations in response
+                meta = resp.get('generatorMetadata', [])
+                if isinstance(meta, list):
+                    sync_meta[cid] = list(range(len(meta)))
+                    sync_meta_updated = True
                 break
 
-    # 3. Write merged entries back to cache
+    # 3. Write merged entries and sync metadata back to cache
     if all_entries:
         _save_antigravity_cache(all_entries)
+    if sync_meta_updated:
+        _save_antigravity_sync_metadata(sync_meta)
 
     # 4. Aggregate by date + bucket
     totals: dict[str, defaultdict[date, int]] = {

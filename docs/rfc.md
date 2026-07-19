@@ -341,23 +341,39 @@ for d, v in antigravity_data.get("gemini", {}).items():
 No new column in the stdout table. No new e-ink category. Antigravity tokens
 appear in existing buckets (primarily Gemini).
 
-### 16.11 Test Strategy
+### 16.11 Robust Session Discovery via Database Scanning
+
+When the Language Server is restarted (e.g., when the IDE is closed and reopened), the LS memory is cleared, and `GetAllCascadeTrajectories` returns an empty list. To ensure historical session usage from the same day is not lost, the dashboard implements a hybrid discovery strategy:
+
+1. **Local DB Scan**: The tool scans the local Antigravity directories on disk (opening SQLite connections safely in read-only mode, with `mode=ro`):
+   - `~/.gemini/antigravity-ide/conversations/*.db`
+   - `~/.gemini/antigravity/conversations/*.db`
+   The basename of each `.db` file (without extension) corresponds to its `cascadeId`.
+
+2. **Generation Index Check**: For each discovered database, the tool queries the `idx` column from its `gen_metadata` table to obtain the set of generation indices (`db_indices`).
+   Each cache entry tracks a `gen_idx` field matching the 0-based generation index from the LS metadata. The tool collects all cached `gen_idx` values for that session (`cached_indices`).
+
+3. **LS Direct Query**: If `db_indices` is not a subset of `cached_indices`, the session has missing or new generations. The tool queries the LS directly via `GetCascadeTrajectoryGeneratorMetadata` using the `cascadeId`, bypassing `GetAllCascadeTrajectories`. The fetched entries are then merged into the cache, deduplicated by `responseId`. This subset-check strategy prevents count-unit mismatch bugs (e.g., when one generation has multiple retries).
+
+### 16.12 Test Strategy
 
 Unit tests (`tests/test_antigravity.py`):
 
 - `classify_antigravity_model()` for known and unknown model IDs
 - `parse_antigravity_usage_response()` with mocked gRPC JSON (synthetic
-  generatorMetadata with retryInfos)
+  generatorMetadata with retryInfos and `gen_idx` injection)
 - date aggregation from `chatStartMetadata.createdAt`
 - dedup by `responseId`
 - empty/missing fields do not crash
 - `discover_antigravity_ls()` with mocked `ps`/`lsof` output
+- `test_load_missing_cascades_from_disk_db` to verify scanning and querying missing cascades
+- `test_load_missing_cascades_subset_mismatch_regression` to verify LS querying triggers when cache count equals DB generation count due to multiple retries, but a generation is actually missing.
 
 Integration test (marked `live_antigravity`): skipped unless an Antigravity LS
 is detected on localhost. Calls the real gRPC and asserts non-zero token totals
 for the current day.
 
-### 16.12 Compatibility
+### 16.13 Compatibility
 
 - No existing token columns, cost logic, or e-ink categories change.
 - When the LS is not running, `load_antigravity()` returns empty dicts — no
@@ -366,7 +382,7 @@ for the current day.
 - The `gemini` bucket now includes Antigravity Gemini + OpenCode Gemini +
   any future Gemini sources. This is the intended consolidation.
 
-### 16.13 Quota Display
+### 16.14 Quota Display
 
 The LS exposes per-model quota via `GetCascadeModelConfigData`:
 
@@ -402,7 +418,7 @@ QuotaSnapshot(
 )
 ```
 
-### 16.14 E-Ink / Simulator Changes
+### 16.15 E-Ink / Simulator Changes
 
 - `firmware_logic.py`: `provider_color('antigravity')` returns `'cyan'` (same
   as Ollama — both are multi-model platforms).

@@ -412,6 +412,223 @@ class TestLoadAntigravity:
         assert 'shared-id' in saved_rids
         assert 'new-id' in saved_rids
 
+    def test_load_missing_cascades_from_disk_db(self):
+        conn = AntigravityConnection(pid=1, port=9999, csrf_token="x")
+        mock_resp = {
+            "generatorMetadata": [
+                {
+                    "chatModel": {
+                        "responseModel": "gemini-3-flash-a",
+                        "retryInfos": [
+                            {"usage": {"inputTokens": 1000, "outputTokens": 200, "cacheReadTokens": 5000, "responseId": "r1", "timestamp": 1711447200000}}
+                        ],
+                    }
+                }
+            ]
+        }
+        
+        # Mock sqlite3 connection
+        mock_conn = MagicMock()
+        mock_cursor = MagicMock()
+        # First call is sqlite_master table check -> returns ('gen_metadata',)
+        mock_cursor.fetchone.return_value = ('gen_metadata',)
+        # Second call is SELECT idx -> returns list of indices
+        mock_cursor.fetchall.return_value = [(0,), (1,)]
+        mock_conn.cursor.return_value = mock_cursor
+        
+        with patch('os.path.exists', return_value=True), \
+             patch('glob.glob', return_value=['/mock/conversations/12345-uuid.db']), \
+             patch('sqlite3.connect', return_value=mock_conn), \
+             patch('auto_usage._discover_antigravity_connections', return_value=[conn]), \
+             patch('auto_usage.fetch_antigravity_trajectories', return_value=[]), \
+             patch('auto_usage._antigravity_rpc', return_value=mock_resp) as mock_rpc, \
+             patch('auto_usage._load_antigravity_cache', return_value=[]), \
+             patch('auto_usage._save_antigravity_cache'), \
+             patch('auto_usage._load_antigravity_sync_metadata', return_value={}), \
+             patch('auto_usage._save_antigravity_sync_metadata'):
+            result = load_antigravity()
+            
+        # Verify that we queried the LS for the cascade ID from the disk database
+        mock_rpc.assert_called_with(conn, 'GetCascadeTrajectoryGeneratorMetadata', {'cascadeId': '12345-uuid'})
+        assert result['gemini'] != {}
+        total = sum(result['gemini'].values())
+        assert total == 6200
+
+    def test_load_missing_cascades_subset_mismatch_regression(self):
+        """Test case where cache count equals DB count due to unit mismatch (retry vs generation),
+        but there is an actual missing generation on disk.
+        """
+        conn = AntigravityConnection(pid=1, port=9999, csrf_token="x")
+        
+        # Cache has 2 entries, but both belong to gen_idx=0 (retries for same generation)
+        cached = [
+            {"model": "gemini-3-flash-a", "timestamp": 1711447200000,
+             "input": 1000, "output": 0, "cache_read": 0, "response_id": "r1",
+             "session_id": "sess-1", "gen_idx": 0},
+            {"model": "gemini-3-flash-a", "timestamp": 1711447200000,
+             "input": 1000, "output": 0, "cache_read": 0, "response_id": "r2",
+             "session_id": "sess-1", "gen_idx": 0},
+        ]
+        
+        # SQLite DB has idx values {0, 1} (2 generations, gen 1 is missing from cache)
+        mock_conn = MagicMock()
+        mock_cursor = MagicMock()
+        mock_cursor.fetchone.return_value = ('gen_metadata',)
+        mock_cursor.fetchall.return_value = [(0,), (1,)]
+        mock_conn.cursor.return_value = mock_cursor
+        
+        # LS returns both generations (0 and 1)
+        mock_resp = {
+            "generatorMetadata": [
+                {
+                    "chatModel": {
+                        "responseModel": "gemini-3-flash-a",
+                        "retryInfos": [
+                            {"usage": {"inputTokens": 1000, "responseId": "r1", "timestamp": 1711447200000}},
+                            {"usage": {"inputTokens": 1000, "responseId": "r2", "timestamp": 1711447200000}},
+                        ],
+                    }
+                },
+                {
+                    "chatModel": {
+                        "responseModel": "gemini-3-flash-a",
+                        "retryInfos": [
+                            {"usage": {"inputTokens": 5000, "responseId": "r3", "timestamp": 1711447200000}},
+                        ],
+                    }
+                }
+            ]
+        }
+        
+        with patch('os.path.exists', return_value=True), \
+             patch('glob.glob', return_value=['/mock/conversations/sess-1.db']), \
+             patch('sqlite3.connect', return_value=mock_conn), \
+             patch('auto_usage._discover_antigravity_connections', return_value=[conn]), \
+             patch('auto_usage.fetch_antigravity_trajectories', return_value=[]), \
+             patch('auto_usage._antigravity_rpc', return_value=mock_resp) as mock_rpc, \
+             patch('auto_usage._load_antigravity_cache', return_value=cached), \
+             patch('auto_usage._save_antigravity_cache') as mock_save, \
+             patch('auto_usage._load_antigravity_sync_metadata', return_value={}), \
+             patch('auto_usage._save_antigravity_sync_metadata'):
+            result = load_antigravity()
+            
+        # Verify that we did query the LS (it wasn't fooled by count = 2 vs 2)
+        mock_rpc.assert_called_once_with(conn, 'GetCascadeTrajectoryGeneratorMetadata', {'cascadeId': 'sess-1'})
+        # Verify cache was written with all 3 entries (r1, r2, r3)
+        mock_save.assert_called_once()
+        saved = mock_save.call_args[0][0]
+        assert len(saved) == 3
+        rids = {e['response_id'] for e in saved}
+        assert rids == {"r1", "r2", "r3"}
+        
+        # Verify output sums: gen_idx 0 (r1/r2 counted once each) + gen_idx 1 (r3) = 1000 + 1000 + 5000 = 7000
+        total = sum(result['gemini'].values())
+        assert total == 7000
+
+    def test_load_antigravity_twice_sync_metadata_avoid_rpc_regression(self):
+        """Regression test verifying that a second load_antigravity refresh on a
+        legacy cache (or a newly synced cache) avoids querying the LS repeatedly,
+        properly updating the sync metadata file.
+        """
+        conn = AntigravityConnection(pid=1, port=9999, csrf_token="x")
+        
+        # Legacy cache without any gen_idx
+        cached = [
+            {"model": "gemini-3-flash-a", "timestamp": 1711447200000,
+             "input": 1000, "output": 200, "cache_read": 5000, "response_id": "r1",
+             "session_id": "sess-legacy"},
+        ]
+        
+        # SQLite DB has generations {0, 1} (legacy gen 0, and new gen 1)
+        mock_conn = MagicMock()
+        mock_cursor = MagicMock()
+        mock_cursor.fetchone.return_value = ('gen_metadata',)
+        mock_cursor.fetchall.return_value = [(0,), (1,)]
+        mock_conn.cursor.return_value = mock_cursor
+        
+        # LS returns both generations (0 and 1)
+        mock_resp = {
+            "generatorMetadata": [
+                {
+                    "chatModel": {
+                        "responseModel": "gemini-3-flash-a",
+                        "retryInfos": [
+                            {"usage": {"inputTokens": 1000, "responseId": "r1", "timestamp": 1711447200000}},
+                        ],
+                    }
+                },
+                {
+                    "chatModel": {
+                        "responseModel": "gemini-3-flash-a",
+                        "retryInfos": [
+                            {"usage": {"inputTokens": 5000, "responseId": "r2", "timestamp": 1711447200000}},
+                        ],
+                    }
+                }
+            ]
+        }
+        
+        # We will track sync_meta in a local dict in the test to simulate disk state
+        in_memory_sync_meta = {}
+        
+        def mock_load_sync():
+            return dict(in_memory_sync_meta)
+            
+        def mock_save_sync(meta):
+            in_memory_sync_meta.clear()
+            in_memory_sync_meta.update(meta)
+
+        # ----------------------------------------------------
+        # Run 1: First sync (performs migration & queries LS for missing gen 1)
+        # ----------------------------------------------------
+        with patch('os.path.exists', return_value=True), \
+             patch('glob.glob', return_value=['/mock/conversations/sess-legacy.db']), \
+             patch('sqlite3.connect', return_value=mock_conn), \
+             patch('auto_usage._discover_antigravity_connections', return_value=[conn]), \
+             patch('auto_usage.fetch_antigravity_trajectories', return_value=[]), \
+             patch('auto_usage._antigravity_rpc', return_value=mock_resp) as mock_rpc, \
+             patch('auto_usage._load_antigravity_cache', return_value=cached), \
+             patch('auto_usage._save_antigravity_cache') as mock_save, \
+             patch('auto_usage._load_antigravity_sync_metadata', side_effect=mock_load_sync), \
+             patch('auto_usage._save_antigravity_sync_metadata', side_effect=mock_save_sync):
+            
+            result1 = load_antigravity()
+            
+        # Verify that we did query the LS
+        mock_rpc.assert_called_once_with(conn, 'GetCascadeTrajectoryGeneratorMetadata', {'cascadeId': 'sess-legacy'})
+        
+        # Sync metadata should be updated to [0, 1]
+        assert in_memory_sync_meta == {'sess-legacy': [0, 1]}
+        
+        # Verify cache was written with merged entries containing gen_idx
+        mock_save.assert_called_once()
+        saved_entries = mock_save.call_args[0][0]
+        # Check that the saved entries contain gen_idx
+        assert any(e.get('gen_idx') is not None for e in saved_entries)
+        
+        # Prepare cache for the second run
+        cached_after_run1 = saved_entries
+
+        # ----------------------------------------------------
+        # Run 2: Second sync (should avoid LS queries entirely!)
+        # ----------------------------------------------------
+        with patch('os.path.exists', return_value=True), \
+             patch('glob.glob', return_value=['/mock/conversations/sess-legacy.db']), \
+             patch('sqlite3.connect', return_value=mock_conn), \
+             patch('auto_usage._discover_antigravity_connections', return_value=[conn]), \
+             patch('auto_usage.fetch_antigravity_trajectories', return_value=[]), \
+             patch('auto_usage._antigravity_rpc') as mock_rpc2, \
+             patch('auto_usage._load_antigravity_cache', return_value=cached_after_run1), \
+             patch('auto_usage._save_antigravity_cache') as mock_save2, \
+             patch('auto_usage._load_antigravity_sync_metadata', side_effect=mock_load_sync), \
+             patch('auto_usage._save_antigravity_sync_metadata', side_effect=mock_save_sync):
+            
+            result2 = load_antigravity()
+            
+        # Verify that we did NOT query the LS this time!
+        mock_rpc2.assert_not_called()
+
+
 
 class TestCalcAntigravityCost:
     def test_gpt_5_6_cache_write_cost(self):
