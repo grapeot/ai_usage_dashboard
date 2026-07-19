@@ -431,8 +431,9 @@ class TestLoadAntigravity:
         mock_conn = MagicMock()
         mock_cursor = MagicMock()
         # First call is sqlite_master table check -> returns ('gen_metadata',)
-        # Second call is SELECT COUNT(*) -> returns (5,)
-        mock_cursor.fetchone.side_effect = [('gen_metadata',), (5,)]
+        mock_cursor.fetchone.return_value = ('gen_metadata',)
+        # Second call is SELECT idx -> returns list of indices
+        mock_cursor.fetchall.return_value = [(0,), (1,)]
         mock_conn.cursor.return_value = mock_cursor
         
         with patch('os.path.exists', return_value=True), \
@@ -450,6 +451,75 @@ class TestLoadAntigravity:
         assert result['gemini'] != {}
         total = sum(result['gemini'].values())
         assert total == 6200
+
+    def test_load_missing_cascades_subset_mismatch_regression(self):
+        """Test case where cache count equals DB count due to unit mismatch (retry vs generation),
+        but there is an actual missing generation on disk.
+        """
+        conn = AntigravityConnection(pid=1, port=9999, csrf_token="x")
+        
+        # Cache has 2 entries, but both belong to gen_idx=0 (retries for same generation)
+        cached = [
+            {"model": "gemini-3-flash-a", "timestamp": 1711447200000,
+             "input": 1000, "output": 0, "cache_read": 0, "response_id": "r1",
+             "session_id": "sess-1", "gen_idx": 0},
+            {"model": "gemini-3-flash-a", "timestamp": 1711447200000,
+             "input": 1000, "output": 0, "cache_read": 0, "response_id": "r2",
+             "session_id": "sess-1", "gen_idx": 0},
+        ]
+        
+        # SQLite DB has idx values {0, 1} (2 generations, gen 1 is missing from cache)
+        mock_conn = MagicMock()
+        mock_cursor = MagicMock()
+        mock_cursor.fetchone.return_value = ('gen_metadata',)
+        mock_cursor.fetchall.return_value = [(0,), (1,)]
+        mock_conn.cursor.return_value = mock_cursor
+        
+        # LS returns both generations (0 and 1)
+        mock_resp = {
+            "generatorMetadata": [
+                {
+                    "chatModel": {
+                        "responseModel": "gemini-3-flash-a",
+                        "retryInfos": [
+                            {"usage": {"inputTokens": 1000, "responseId": "r1", "timestamp": 1711447200000}},
+                            {"usage": {"inputTokens": 1000, "responseId": "r2", "timestamp": 1711447200000}},
+                        ],
+                    }
+                },
+                {
+                    "chatModel": {
+                        "responseModel": "gemini-3-flash-a",
+                        "retryInfos": [
+                            {"usage": {"inputTokens": 5000, "responseId": "r3", "timestamp": 1711447200000}},
+                        ],
+                    }
+                }
+            ]
+        }
+        
+        with patch('os.path.exists', return_value=True), \
+             patch('glob.glob', return_value=['/mock/conversations/sess-1.db']), \
+             patch('sqlite3.connect', return_value=mock_conn), \
+             patch('auto_usage._discover_antigravity_connections', return_value=[conn]), \
+             patch('auto_usage.fetch_antigravity_trajectories', return_value=[]), \
+             patch('auto_usage._antigravity_rpc', return_value=mock_resp) as mock_rpc, \
+             patch('auto_usage._load_antigravity_cache', return_value=cached), \
+             patch('auto_usage._save_antigravity_cache') as mock_save:
+            result = load_antigravity()
+            
+        # Verify that we did query the LS (it wasn't fooled by count = 2 vs 2)
+        mock_rpc.assert_called_once_with(conn, 'GetCascadeTrajectoryGeneratorMetadata', {'cascadeId': 'sess-1'})
+        # Verify cache was written with all 3 entries (r1, r2, r3)
+        mock_save.assert_called_once()
+        saved = mock_save.call_args[0][0]
+        assert len(saved) == 3
+        rids = {e['response_id'] for e in saved}
+        assert rids == {"r1", "r2", "r3"}
+        
+        # Verify output sums: gen_idx 0 (r1/r2 counted once each) + gen_idx 1 (r3) = 1000 + 1000 + 5000 = 7000
+        total = sum(result['gemini'].values())
+        assert total == 7000
 
 
 

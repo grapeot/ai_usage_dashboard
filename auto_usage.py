@@ -1680,7 +1680,7 @@ def parse_antigravity_usage_response(
         return []
 
     entries: list[dict] = []
-    for m in meta:
+    for gen_idx, m in enumerate(meta):
         if not isinstance(m, dict):
             continue
         cm = m.get('chatModel', m)
@@ -1719,6 +1719,7 @@ def parse_antigravity_usage_response(
                 'thinking': th,
                 'response_id': u.get('responseId'),
                 'session_id': session_id,
+                'gen_idx': gen_idx,
             })
     return entries
 
@@ -1869,41 +1870,49 @@ def load_antigravity() -> dict[str, DailyTokens]:
 
     # 2. Fetch live data from LS
     # Build a list of cascade IDs to query. We scan local conversation databases
-    # on disk and check if we have fewer cached entries for them than there are
-    # generations (rows in gen_metadata table) in the DB.
+    # on disk and check if we are missing any generation indices in our cache.
     import glob
-    cache_counts: dict[str, int] = defaultdict(int)
+    import sys
+    cache_indices: dict[str, set[int]] = defaultdict(set)
     for e in cached:
         sid = e.get('session_id')
-        if sid:
-            cache_counts[sid] += 1
+        gidx = e.get('gen_idx')
+        if sid and gidx is not None:
+            try:
+                cache_indices[sid].add(int(gidx))
+            except (ValueError, TypeError):
+                pass
 
     db_dirs = [
         os.path.expanduser('~/.gemini/antigravity-ide/conversations'),
         os.path.expanduser('~/.gemini/antigravity/conversations'),
     ]
-    discovered_cascades: dict[str, int] = {}
+    discovered_cascades: dict[str, set[int]] = {}
     for ddir in db_dirs:
         if not os.path.exists(ddir):
             continue
         for db_path in glob.glob(os.path.join(ddir, '*.db')):
             cid = os.path.splitext(os.path.basename(db_path))[0]
+            conn = None
             try:
-                conn = sqlite3.connect(db_path)
+                # Open SQLite with mode=ro via URI for safety
+                conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
                 cursor = conn.cursor()
                 cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='gen_metadata';")
                 if cursor.fetchone():
-                    cursor.execute("SELECT COUNT(*) FROM gen_metadata;")
-                    row = cursor.fetchone()
-                    if row:
-                        discovered_cascades[cid] = row[0]
-                conn.close()
-            except Exception:
-                pass
+                    cursor.execute("SELECT idx FROM gen_metadata;")
+                    rows = cursor.fetchall()
+                    discovered_cascades[cid] = {int(r[0]) for r in rows if r[0] is not None}
+            except Exception as err:
+                print(f"Warning: Failed to scan Antigravity DB {db_path}: {err}", file=sys.stderr)
+            finally:
+                if conn:
+                    conn.close()
 
     to_query: set[str] = set()
-    for cid, db_count in discovered_cascades.items():
-        if cache_counts[cid] < db_count:
+    for cid, db_indices in discovered_cascades.items():
+        cached_indices = cache_indices[cid]
+        if not db_indices.issubset(cached_indices):
             to_query.add(cid)
 
     connections = _discover_antigravity_connections()
@@ -1939,6 +1948,7 @@ def load_antigravity() -> dict[str, DailyTokens]:
                         'thinking': e['thinking'],
                         'response_id': e.get('response_id'),
                         'session_id': e.get('session_id'),
+                        'gen_idx': e.get('gen_idx'),
                     }
                     all_entries.append(cache_entry)
                 break

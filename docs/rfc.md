@@ -345,14 +345,15 @@ appear in existing buckets (primarily Gemini).
 
 When the Language Server is restarted (e.g., when the IDE is closed and reopened), the LS memory is cleared, and `GetAllCascadeTrajectories` returns an empty list. To ensure historical session usage from the same day is not lost, the dashboard implements a hybrid discovery strategy:
 
-1. **Local DB Scan**: The tool scans the local Antigravity directories on disk:
+1. **Local DB Scan**: The tool scans the local Antigravity directories on disk (opening SQLite connections safely in read-only mode, with `mode=ro`):
    - `~/.gemini/antigravity-ide/conversations/*.db`
    - `~/.gemini/antigravity/conversations/*.db`
    The basename of each `.db` file (without extension) corresponds to its `cascadeId`.
 
-2. **Step Count Check**: For each discovered database, the tool queries its `gen_metadata` table to obtain the total count of model generation steps (`db_count`). It compares this against the number of cached entries for that `session_id` in the local cache (`cache_count`).
+2. **Generation Index Check**: For each discovered database, the tool queries the `idx` column from its `gen_metadata` table to obtain the set of generation indices (`db_indices`).
+   Each cache entry tracks a `gen_idx` field matching the 0-based generation index from the LS metadata. The tool collects all cached `gen_idx` values for that session (`cached_indices`).
 
-3. **LS Direct Query**: If `cache_count < db_count`, the cascade has new or missing entries. The tool adds this `cascadeId` to the query set. The running LS is queried directly via `GetCascadeTrajectoryGeneratorMetadata` using the `cascadeId`, bypassing `GetAllCascadeTrajectories`. The fetched entries are then merged into the cache, deduplicated by `responseId`.
+3. **LS Direct Query**: If `db_indices` is not a subset of `cached_indices`, the session has missing or new generations. The tool queries the LS directly via `GetCascadeTrajectoryGeneratorMetadata` using the `cascadeId`, bypassing `GetAllCascadeTrajectories`. The fetched entries are then merged into the cache, deduplicated by `responseId`. This subset-check strategy prevents count-unit mismatch bugs (e.g., when one generation has multiple retries).
 
 ### 16.12 Test Strategy
 
@@ -360,12 +361,13 @@ Unit tests (`tests/test_antigravity.py`):
 
 - `classify_antigravity_model()` for known and unknown model IDs
 - `parse_antigravity_usage_response()` with mocked gRPC JSON (synthetic
-  generatorMetadata with retryInfos)
+  generatorMetadata with retryInfos and `gen_idx` injection)
 - date aggregation from `chatStartMetadata.createdAt`
 - dedup by `responseId`
 - empty/missing fields do not crash
 - `discover_antigravity_ls()` with mocked `ps`/`lsof` output
 - `test_load_missing_cascades_from_disk_db` to verify scanning and querying missing cascades
+- `test_load_missing_cascades_subset_mismatch_regression` to verify LS querying triggers when cache count equals DB generation count due to multiple retries, but a generation is actually missing.
 
 Integration test (marked `live_antigravity`): skipped unless an Antigravity LS
 is detected on localhost. Calls the real gRPC and asserts non-zero token totals
