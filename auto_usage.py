@@ -7,7 +7,6 @@ import json
 import csv
 import importlib
 import re
-import socket
 import subprocess
 import os
 import sys
@@ -23,6 +22,7 @@ import matplotlib.dates as mdates
 from matplotlib.font_manager import FontProperties
 import requests
 
+import antigravity_usage as _antigravity_usage
 from pricing_config import get_pricing, calc_cost
 
 plt.rcParams['axes.unicode_minus'] = False
@@ -1387,341 +1387,88 @@ def load_opencode_detailed(exclude_glm: bool = True, start_ts: int | None = None
 # cookies, or user configuration are needed.
 # ---------------------------------------------------------------------------
 
-# Known MODEL_PLACEHOLDER_M* → model family. Probed from the LS binary and
-# verified against gen_metadata. Unknown placeholders default to "gemini"
-# (Antigravity's default model family) and are logged to stderr.
-ANTIGRAVITY_MODEL_PLACEHOLDER_MAP: dict[str, str] = {
-    'model_placeholder_m20': 'gemini-3-flash-a',
-}
-
-
-class AntigravityConnection(TypedDict):
-    pid: int
-    port: int
-    csrf_token: str
+# These names remain public compatibility seams. Wrappers resolve facade
+# collaborators at call time so existing ``patch('auto_usage...')`` callers
+# keep controlling the provider implementation.
+ANTIGRAVITY_MODEL_PLACEHOLDER_MAP = (
+    _antigravity_usage.ANTIGRAVITY_MODEL_PLACEHOLDER_MAP
+)
+AntigravityConnection = _antigravity_usage.AntigravityConnection
 
 
 def _classify_antigravity_model(model_id: str) -> str:
-    """Map an Antigravity LS model ID to a dashboard bucket name."""
-    m = (model_id or '').lower().strip()
-    if not m:
-        return 'opencode_other'
-    # resolve placeholder enum
-    if m.startswith('model_placeholder_'):
-        resolved = ANTIGRAVITY_MODEL_PLACEHOLDER_MAP.get(m)
-        if resolved:
-            m = resolved
-        else:
-            print(f"Antigravity: unknown model placeholder {model_id!r}, defaulting to gemini bucket", file=sys.stderr)
-            return 'gemini'
-    if 'gemini' in m:
-        return 'gemini'
-    if 'claude' in m:
-        return 'anthropic'
-    if 'gpt' in m:
-        return 'gpt_opencode'
-    if 'deepseek' in m:
-        return 'deepseek'
-    return 'opencode_other'
+    return _antigravity_usage.classify_model(
+        model_id,
+        placeholder_map=ANTIGRAVITY_MODEL_PLACEHOLDER_MAP,
+    )
 
 
 def _extract_flag_value(argv: str, flag: str) -> str | None:
-    """Extract a --flag value from a command-line string."""
-    compact = f'{flag}='
-    idx = argv.find(compact)
-    if idx >= 0:
-        rest = argv[idx + len(compact):]
-        return rest.split()[0] if rest else None
-    idx = argv.find(flag)
-    if idx < 0:
-        return None
-    rest = argv[idx + len(flag):]
-    tokens = rest.split()
-    return tokens[0] if tokens else None
+    return _antigravity_usage.extract_flag_value(argv, flag)
 
 
 def _is_antigravity_ls_command(command: str) -> bool:
-    lower = command.lower()
-    return (
-        'language_server' in lower
-        and ('antigravity' in lower or '--app_data_dir antigravity' in lower)
-    )
+    return _antigravity_usage.is_ls_command(command)
 
 
 def _discover_antigravity_connections() -> list[AntigravityConnection]:
-    """Find running Antigravity LS processes and their gRPC HTTP ports.
-
-    Returns a list of connections sorted by PID descending (most recent LS
-    first). Each connection has been verified via a Heartbeat probe.
-    """
-    try:
-        result = subprocess.run(
-            ['ps', '-ww', '-eo', 'pid,args'],
-            capture_output=True, text=True, timeout=5,
-        )
-    except (OSError, subprocess.SubprocessError):
-        return []
-
-    candidates: list[tuple[int, str]] = []
-    for line in result.stdout.splitlines():
-        stripped = line.strip()
-        if not stripped:
-            continue
-        parts = stripped.split(None, 1)
-        if len(parts) < 2:
-            continue
-        try:
-            pid = int(parts[0])
-        except ValueError:
-            continue
-        command = parts[1]
-        if not _is_antigravity_ls_command(command):
-            continue
-        candidates.append((pid, command))
-
-    connections: list[AntigravityConnection] = []
-    for pid, command in candidates:
-        csrf = _extract_flag_value(command, '--csrf_token')
-        if not csrf or len(csrf) < 32:
-            continue
-        ports = _find_listening_ports(pid)
-        for port in ports:
-            if _probe_antigravity_heartbeat(port, csrf):
-                connections.append(AntigravityConnection(pid=pid, port=port, csrf_token=csrf))
-                break  # one HTTP gRPC port per LS is enough
-
-    connections.sort(key=lambda c: c['pid'], reverse=True)
-    return connections
+    return _antigravity_usage.discover_connections(
+        extract_flag=_extract_flag_value,
+        command_matches=_is_antigravity_ls_command,
+        find_ports=_find_listening_ports,
+        heartbeat_probe=_probe_antigravity_heartbeat,
+    )
 
 
 def _find_listening_ports(pid: int) -> list[int]:
-    """Use lsof to find TCP listening ports for a PID."""
-    try:
-        result = subprocess.run(
-            ['lsof', '-Pan', '-p', str(pid), '-iTCP', '-sTCP:LISTEN'],
-            capture_output=True, text=True, timeout=5,
-        )
-    except (OSError, subprocess.SubprocessError):
-        return []
-    ports: list[int] = []
-    for line in result.stdout.splitlines():
-        for token in line.split():
-            for prefix in ('127.0.0.1:', 'localhost:', '*:', '::1:'):
-                if token.startswith(prefix):
-                    cleaned = token[len(prefix):].rstrip('(LISTEN),')
-                    try:
-                        p = int(cleaned)
-                        if p not in ports:
-                            ports.append(p)
-                    except ValueError:
-                        pass
-    return ports
+    return _antigravity_usage.find_listening_ports(pid)
 
 
 def _probe_antigravity_heartbeat(port: int, csrf_token: str) -> bool:
-    """Send a Heartbeat gRPC call to verify the port is an Antigravity LS."""
-    body = '{"uuid":"00000000-0000-0000-0000-000000000000"}'
-    request = (
-        f'POST /exa.language_server_pb.LanguageServerService/Heartbeat HTTP/1.1\r\n'
-        f'Host: 127.0.0.1:{port}\r\n'
-        f'Content-Type: application/json\r\n'
-        f'Content-Length: {len(body)}\r\n'
-        f'Connect-Protocol-Version: 1\r\n'
-        f'X-Codeium-Csrf-Token: {csrf_token}\r\n'
-        f'Connection: close\r\n\r\n{body}'
-    )
-    try:
-        with socket.create_connection(('127.0.0.1', port), timeout=3) as s:
-            s.sendall(request.encode())
-            response = s.recv(4096)
-        return response.startswith(b'HTTP/1.1 200')
-    except (OSError, socket.timeout):
-        return False
+    return _antigravity_usage.probe_heartbeat(port, csrf_token)
 
 
 def _antigravity_rpc(
     connection: AntigravityConnection, method: str, body: dict,
 ) -> dict | None:
-    """Call an Antigravity LS gRPC method over HTTP/JSON.
-
-    Returns the parsed JSON response dict, or None on any error (connection
-    refused, non-200 status, invalid JSON, timeout).
-    """
-    payload = json.dumps(body)
-    request = (
-        f'POST /exa.language_server_pb.LanguageServerService/{method} HTTP/1.1\r\n'
-        f'Host: 127.0.0.1:{connection["port"]}\r\n'
-        f'Content-Type: application/json\r\n'
-        f'Content-Length: {len(payload)}\r\n'
-        f'Connect-Protocol-Version: 1\r\n'
-        f'X-Codeium-Csrf-Token: {connection["csrf_token"]}\r\n'
-        f'Connection: close\r\n\r\n{payload}'
+    return _antigravity_usage.rpc(
+        connection,
+        method,
+        body,
+        decode_chunks=_dechunk,
     )
-    try:
-        with socket.create_connection(('127.0.0.1', connection['port']), timeout=10) as s:
-            s.sendall(request.encode())
-            buf = b''
-            while True:
-                chunk = s.recv(262144)
-                if not chunk:
-                    break
-                buf += chunk
-    except (OSError, socket.timeout):
-        return None
-
-    header_end = buf.find(b'\r\n\r\n')
-    if header_end < 0:
-        return None
-    header = buf[:header_end].decode(errors='replace')
-    body_raw = buf[header_end + 4:]
-
-    status_parts = header.split()
-    if len(status_parts) < 2 or status_parts[1] != '200':
-        return None
-
-    # Handle chunked transfer encoding
-    if 'transfer-encoding: chunked' in header.lower():
-        body_raw = _dechunk(body_raw)
-
-    try:
-        return json.loads(body_raw)
-    except (json.JSONDecodeError, UnicodeDecodeError):
-        return None
 
 
 def _dechunk(data: bytes) -> bytes:
-    """Decode HTTP chunked transfer-encoding body."""
-    out = bytearray()
-    i = 0
-    while i < len(data):
-        nl = data.find(b'\r\n', i)
-        if nl < 0:
-            break
-        try:
-            size = int(data[i:nl], 16)
-        except ValueError:
-            break
-        if size == 0:
-            break
-        out.extend(data[nl + 2: nl + 2 + size])
-        i = nl + 2 + size + 2
-    return bytes(out)
+    return _antigravity_usage.dechunk(data)
 
 
 def _parse_antigravity_timestamp(value) -> int | None:
-    """Parse a timestamp value (epoch-ms int or ISO string) to epoch-ms."""
-    if value is None:
-        return None
-    if isinstance(value, (int, float)):
-        return int(value)
-    if isinstance(value, str):
-        try:
-            return int(value)
-        except ValueError:
-            pass
-        try:
-            dt = datetime.fromisoformat(value.replace('Z', '+00:00'))
-            return int(dt.timestamp() * 1000)
-        except ValueError:
-            pass
-    return None
+    return _antigravity_usage.parse_timestamp(value)
 
 
 def _to_int(value) -> int:
-    if value is None:
-        return 0
-    if isinstance(value, (int, float)):
-        return int(value)
-    try:
-        return int(str(value))
-    except (ValueError, TypeError):
-        return 0
+    return _antigravity_usage.to_int(value)
 
 
 def fetch_antigravity_trajectories(
     connections: list[AntigravityConnection],
 ) -> list[dict]:
-    """Fetch all cascade trajectory summaries from all LS connections."""
-    seen: set[str] = set()
-    trajectories: list[dict] = []
-    for conn in connections:
-        resp = _antigravity_rpc(conn, 'GetAllCascadeTrajectories', {})
-        if not resp:
-            continue
-        summaries = resp.get('trajectorySummaries') or resp.get('cascadeTrajectories') or []
-        if isinstance(summaries, dict):
-            summaries = [
-                {'cascadeId': k, **(v if isinstance(v, dict) else {})}
-                for k, v in summaries.items()
-            ]
-        if not isinstance(summaries, list):
-            continue
-        for s in summaries:
-            if not isinstance(s, dict):
-                continue
-            cid = s.get('cascadeId') or s.get('trajectoryId') or s.get('id')
-            if not cid or cid in seen:
-                continue
-            seen.add(cid)
-            trajectories.append(s)
-    return trajectories
+    return _antigravity_usage.fetch_trajectories(
+        connections,
+        rpc_call=_antigravity_rpc,
+    )
 
 
 def parse_antigravity_usage_response(
     response: dict, session_id: str = '',
 ) -> list[dict]:
-    """Parse a GetCascadeTrajectoryGeneratorMetadata response into usage entries.
-
-    Each entry: {model, timestamp_ms, input, output, cache_read, thinking,
-    response_id, session_id}.
-    """
-    meta = response.get('generatorMetadata', [])
-    if not isinstance(meta, list):
-        return []
-
-    entries: list[dict] = []
-    for gen_idx, m in enumerate(meta):
-        if not isinstance(m, dict):
-            continue
-        cm = m.get('chatModel', m)
-        if not isinstance(cm, dict):
-            continue
-        model_id = cm.get('responseModel') or cm.get('model') or 'unknown'
-        created_at = cm.get('chatStartMetadata', {}).get('createdAt') if isinstance(cm.get('chatStartMetadata'), dict) else None
-        fallback_ts = _parse_antigravity_timestamp(created_at)
-
-        retry_infos = cm.get('retryInfos', [])
-        if not isinstance(retry_infos, list):
-            continue
-        for r in retry_infos:
-            if not isinstance(r, dict):
-                continue
-            u = r.get('usage', r)
-            if not isinstance(u, dict):
-                u = {}
-            inp = _to_int(u.get('inputTokens'))
-            out = _to_int(u.get('outputTokens'))
-            cr = _to_int(u.get('cacheReadTokens'))
-            cw = _to_int(u.get('cacheWriteTokens'))
-            th = _to_int(u.get('thinkingOutputTokens'))
-            if inp + out + cr + cw + th == 0:
-                continue
-            ts = _parse_antigravity_timestamp(
-                u.get('createdAt') or u.get('timestamp')
-            ) or fallback_ts
-            entries.append({
-                'model': model_id,
-                'timestamp_ms': ts,
-                'input': inp,
-                'output': out,
-                'cache_read': cr,
-                'cache_write': cw,
-                'thinking': th,
-                'response_id': u.get('responseId'),
-                'session_id': session_id,
-                'gen_idx': gen_idx,
-            })
-    return entries
+    return _antigravity_usage.parse_usage_response(
+        response,
+        session_id,
+        parse_time=_parse_antigravity_timestamp,
+        coerce_int=_to_int,
+    )
 
 
 ANTIGRAVITY_CACHE_FILE = os.path.join(SCRIPT_DIR, 'antigravity_usage_cache.json')
@@ -1729,413 +1476,93 @@ ANTIGRAVITY_SYNC_METADATA_FILE = os.path.join(SCRIPT_DIR, 'antigravity_sync_meta
 
 
 def _load_antigravity_sync_metadata() -> dict[str, list[int]]:
-    """Load Antigravity session sync metadata (mapping session_id to list of synced gen_idx)."""
-    if not os.path.exists(ANTIGRAVITY_SYNC_METADATA_FILE):
-        return {}
-    try:
-        with open(ANTIGRAVITY_SYNC_METADATA_FILE, 'r', encoding='utf-8') as f:
-            data = json.load(f)
-            if isinstance(data, dict):
-                return {k: list(v) for k, v in data.items() if isinstance(v, list)}
-    except Exception:
-        pass
-    return {}
-
-
-def _save_antigravity_sync_metadata(metadata: dict[str, list[int]]) -> None:
-    """Save Antigravity session sync metadata to disk."""
-    try:
-        with open(ANTIGRAVITY_SYNC_METADATA_FILE, 'w', encoding='utf-8') as f:
-            json.dump(metadata, f, indent=2)
-    except Exception:
-        pass
-
-
-def _load_antigravity_cache() -> list[dict]:
-    """Load cached Antigravity usage entries from disk.
-
-    Returns a list of entry dicts with keys: model, timestamp, input, output,
-    cache_read, cache_write, thinking, response_id, session_id.
-    Returns [] when the cache file is absent or malformed.
-    """
-    if not os.path.exists(ANTIGRAVITY_CACHE_FILE):
-        return []
-    try:
-        with open(ANTIGRAVITY_CACHE_FILE) as f:
-            data = json.load(f)
-        entries = data.get('entries', [])
-        if not isinstance(entries, list):
-            return []
-        return entries
-    except (json.JSONDecodeError, OSError):
-        return []
-
-
-def _save_antigravity_cache(entries: list[dict]) -> None:
-    """Write usage entries to the cache file, deduplicated by response_id."""
-    deduped: list[dict] = []
-    seen: set[str] = set()
-    for e in entries:
-        rid = e.get('response_id')
-        if rid:
-            if rid in seen:
-                continue
-            seen.add(rid)
-        deduped.append(e)
-    with open(ANTIGRAVITY_CACHE_FILE, 'w') as f:
-        json.dump({
-            'version': 1,
-            'updated_at': datetime.now().isoformat(),
-            'entries': deduped,
-        }, f, indent=2)
-
-
-def _entry_to_date(entry: dict) -> date | None:
-    """Extract a date from a cache entry's timestamp field."""
-    ts = entry.get('timestamp')
-    if ts is None:
-        ts = entry.get('timestamp_ms')
-    if isinstance(ts, (int, float)) and ts > 0:
-        return datetime.fromtimestamp(ts / 1000).date()
-    if isinstance(ts, str) and ts:
-        try:
-            dt = datetime.fromisoformat(ts.replace('Z', '+00:00'))
-            return dt.date()
-        except ValueError:
-            pass
-    return None
-
-
-def _entry_total(entry: dict) -> int:
-    """Sum all token fields in a cache entry."""
-    return (
-        int(entry.get('input', 0) or 0)
-        + int(entry.get('output', 0) or 0)
-        + int(entry.get('cache_read', 0) or 0)
-        + int(entry.get('cache_write', 0) or 0)
-        + int(entry.get('thinking', 0) or 0)
+    return _antigravity_usage.load_sync_metadata(
+        ANTIGRAVITY_SYNC_METADATA_FILE
     )
 
 
-class IngestResult(TypedDict):
-    received: int
-    new: int
-    duplicate: int
-    total_cache: int
+def _save_antigravity_sync_metadata(metadata: dict[str, list[int]]) -> None:
+    _antigravity_usage.save_sync_metadata(
+        ANTIGRAVITY_SYNC_METADATA_FILE,
+        metadata,
+    )
+
+
+def _load_antigravity_cache() -> list[dict]:
+    return _antigravity_usage.load_cache(ANTIGRAVITY_CACHE_FILE)
+
+
+def _save_antigravity_cache(entries: list[dict]) -> None:
+    _antigravity_usage.save_cache(ANTIGRAVITY_CACHE_FILE, entries)
+
+
+def _entry_to_date(entry: dict) -> date | None:
+    return _antigravity_usage.entry_to_date(entry)
+
+
+def _entry_total(entry: dict) -> int:
+    return _antigravity_usage.entry_total(entry)
+
+
+IngestResult = _antigravity_usage.IngestResult
 
 
 def ingest_antigravity_entries(new_entries: list[dict]) -> IngestResult:
-    """Merge externally-pushed entries into the local Antigravity cache.
-
-    Reads the current cache, deduplicates by response_id (entries already in
-    cache are counted as duplicate), appends new entries, and writes the
-    merged set back to cache. Intended for cross-machine push: a satellite
-    machine sends its entries to the dashboard host's
-    ``POST /api/v1/antigravity/ingest`` endpoint, which calls this function.
-
-    Entries without a response_id are always appended (never considered
-    duplicate). The cache is not cleared on failure; partial writes are
-    avoided by building the full merged list before opening the file.
-    """
-    cached = _load_antigravity_cache()
-    seen: set[str] = set()
-    for e in cached:
-        rid = e.get('response_id')
-        if rid:
-            seen.add(rid)
-
-    merged = list(cached)
-    new_count = 0
-    dup_count = 0
-    for e in new_entries:
-        rid = e.get('response_id')
-        if rid and rid in seen:
-            dup_count += 1
-            continue
-        if rid:
-            seen.add(rid)
-        merged.append(e)
-        new_count += 1
-
-    _save_antigravity_cache(merged)
-    return IngestResult(
-        received=len(new_entries),
-        new=new_count,
-        duplicate=dup_count,
-        total_cache=len(merged),
+    return _antigravity_usage.ingest_entries(
+        new_entries,
+        load_cached=_load_antigravity_cache,
+        save_cached=_save_antigravity_cache,
     )
 
 
 def load_antigravity() -> dict[str, DailyTokens]:
-    """Load Antigravity IDE token usage from cache + live Language Server.
-
-    Reads cached entries from disk first, then fetches live data from any
-    running LS. Merges by response_id dedup, writes the merged set back to
-    cache, and returns per-bucket daily token totals.
-
-    Returns empty dicts for all buckets when neither cache nor LS has data.
-    """
-    empty = {
-        'gemini': {},
-        'anthropic': {},
-        'gpt_opencode': {},
-        'deepseek': {},
-        'opencode_other': {},
-    }
-
-    # 1. Load cached entries
-    cached = _load_antigravity_cache()
-    all_entries: list[dict] = list(cached)
-    seen_response_ids: set[str] = set()
-    for e in cached:
-        rid = e.get('response_id')
-        if rid:
-            seen_response_ids.add(rid)
-
-    # 2. Fetch live data from LS
-    # Build a list of cascade IDs to query. We scan local conversation databases
-    # on disk and check if we are missing any generation indices in our cache.
-    import glob
-    import sys
-    
-    sync_meta = _load_antigravity_sync_metadata()
-    cascades_in_cache = {e.get('session_id') for e in cached if e.get('session_id')}
-    sync_meta_updated = False
-
-    db_dirs = [
-        os.path.expanduser('~/.gemini/antigravity-ide/conversations'),
-        os.path.expanduser('~/.gemini/antigravity/conversations'),
-    ]
-    discovered_cascades: dict[str, set[int]] = {}
-    for ddir in db_dirs:
-        if not os.path.exists(ddir):
-            continue
-        for db_path in glob.glob(os.path.join(ddir, '*.db')):
-            cid = os.path.splitext(os.path.basename(db_path))[0]
-            conn = None
-            try:
-                # Open SQLite with mode=ro via URI for safety
-                conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
-                cursor = conn.cursor()
-                cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='gen_metadata';")
-                if cursor.fetchone():
-                    cursor.execute("SELECT idx FROM gen_metadata;")
-                    rows = cursor.fetchall()
-                    discovered_cascades[cid] = {int(r[0]) for r in rows if r[0] is not None}
-            except Exception as err:
-                print(f"Warning: Failed to scan Antigravity DB {db_path}: {err}", file=sys.stderr)
-            finally:
-                if conn:
-                    conn.close()
-
-    to_query: set[str] = set()
-    for cid, db_indices in discovered_cascades.items():
-        cached_indices = set(sync_meta.get(cid, []))
-        if not db_indices.issubset(cached_indices):
-            to_query.add(cid)
-
-    connections = _discover_antigravity_connections()
-    if connections:
-        # Also query active trajectories returned by running LS
-        trajectories = fetch_antigravity_trajectories(connections)
-        for summary in trajectories:
-            cid = summary.get('cascadeId') or summary.get('trajectoryId') or summary.get('id')
-            if cid:
-                to_query.add(cid)
-
-        # Query metadata for all out-of-date or active cascade IDs
-        for cid in sorted(to_query):
-            for conn in connections:
-                resp = _antigravity_rpc(conn, 'GetCascadeTrajectoryGeneratorMetadata', {'cascadeId': cid})
-                if not resp:
-                    continue
-                entries = parse_antigravity_usage_response(resp, session_id=cid)
-                for e in entries:
-                    rid = e.get('response_id')
-                    if rid and rid in seen_response_ids:
-                        continue
-                    if rid:
-                        seen_response_ids.add(rid)
-                    # Normalize for cache: timestamp_ms → timestamp
-                    cache_entry = {
-                        'model': e['model'],
-                        'timestamp': e.get('timestamp_ms'),
-                        'input': e['input'],
-                        'output': e['output'],
-                        'cache_read': e['cache_read'],
-                        'cache_write': e['cache_write'],
-                        'thinking': e['thinking'],
-                        'response_id': e.get('response_id'),
-                        'session_id': e.get('session_id'),
-                        'gen_idx': e.get('gen_idx'),
-                    }
-                    all_entries.append(cache_entry)
-                
-                # Mark as fully synchronized up to the current count of generations in response
-                meta = resp.get('generatorMetadata', [])
-                if isinstance(meta, list):
-                    sync_meta[cid] = list(range(len(meta)))
-                    sync_meta_updated = True
-                break
-
-    # 3. Write merged entries and sync metadata back to cache
-    if all_entries:
-        _save_antigravity_cache(all_entries)
-    if sync_meta_updated:
-        _save_antigravity_sync_metadata(sync_meta)
-
-    # 4. Aggregate by date + bucket
-    totals: dict[str, defaultdict[date, int]] = {
-        'gemini': defaultdict(int),
-        'anthropic': defaultdict(int),
-        'gpt_opencode': defaultdict(int),
-        'deepseek': defaultdict(int),
-        'opencode_other': defaultdict(int),
-    }
-    for e in all_entries:
-        dt = _entry_to_date(e)
-        if not dt:
-            continue
-        total = _entry_total(e)
-        if total <= 0:
-            continue
-        bucket = _classify_antigravity_model(e.get('model', ''))
-        totals[bucket][dt] += total
-
-    return {k: dict(v) for k, v in totals.items()}
+    return _antigravity_usage.load_usage(
+        load_cached=_load_antigravity_cache,
+        save_cached=_save_antigravity_cache,
+        load_sync=_load_antigravity_sync_metadata,
+        save_sync=_save_antigravity_sync_metadata,
+        discover=_discover_antigravity_connections,
+        fetch=fetch_antigravity_trajectories,
+        rpc_call=_antigravity_rpc,
+        parse_usage=parse_antigravity_usage_response,
+        classify=_classify_antigravity_model,
+        get_entry_date=_entry_to_date,
+        get_entry_total=_entry_total,
+        conversation_dirs=[
+            os.path.expanduser('~/.gemini/antigravity-ide/conversations'),
+            os.path.expanduser('~/.gemini/antigravity/conversations'),
+        ],
+    )
 
 
 def load_antigravity_detailed() -> dict[date, dict[str, dict[str, int]]]:
-    """Load per-model Antigravity token breakdown for cost calculation.
-
-    Reads from cache + live LS, same merge logic as load_antigravity().
-    Returns {date: {model_id: {input, output, cache_read, cache_write, thinking}}}.
-    """
-    daily_models: defaultdict[date, defaultdict[str, dict[str, int]]] = defaultdict(
-        lambda: defaultdict(lambda: {'input': 0, 'output': 0, 'cache_read': 0, 'cache_write': 0, 'thinking': 0})
+    return _antigravity_usage.load_detailed(
+        load_cached=_load_antigravity_cache,
+        get_entry_date=_entry_to_date,
     )
-
-    # Use cache entries (already merged with live data by load_antigravity)
-    cached = _load_antigravity_cache()
-    for e in cached:
-        dt = _entry_to_date(e)
-        if not dt:
-            continue
-        model_id = e.get('model', 'unknown')
-        daily_models[dt][model_id]['input'] += int(e.get('input', 0) or 0)
-        daily_models[dt][model_id]['output'] += int(e.get('output', 0) or 0) + int(e.get('thinking', 0) or 0)
-        daily_models[dt][model_id]['cache_read'] += int(e.get('cache_read', 0) or 0)
-        daily_models[dt][model_id]['cache_write'] += int(e.get('cache_write', 0) or 0)
-
-    return {d: dict(v) for d, v in daily_models.items()}
 
 
 def calc_antigravity_cost(detailed: dict[date, dict[str, dict[str, int]]]) -> DailyCosts:
-    """Calculate USD cost from Antigravity per-model breakdown."""
-    result: defaultdict[date, float] = defaultdict(float)
-    for dt, models in detailed.items():
-        for model_id, tok in models.items():
-            p = get_pricing(model_id)
-            if not p:
-                # try antigravity- prefixed alias
-                p = get_pricing(f'antigravity-{model_id}')
-            if not p and 'gemini' in (model_id or '').lower():
-                p = get_pricing('gemini-3-flash')
-            if not p:
-                continue
-            result[dt] += calc_cost(
-                p,
-                input_tokens=tok['input'] + tok['cache_read'],
-                output_tokens=tok['output'],
-                cached_tokens=tok['cache_read'],
-                cache_write_tokens=tok['cache_write'],
-            )
-    return dict(result)
+    return _antigravity_usage.calculate_cost(
+        detailed,
+        pricing_lookup=get_pricing,
+        cost_calculator=calc_cost,
+    )
 
 
-# Antigravity model family detection for quota grouping
 def _antigravity_model_family(label: str, model_id: str) -> str:
-    """Map an Antigravity model to a display family for quota grouping."""
-    combined = f'{label} {model_id}'.lower()
-    if 'gemini' in combined or 'placeholder_m20' in combined or 'placeholder_m132' in combined or 'placeholder_m187' in combined or 'placeholder_m36' in combined or 'placeholder_m16' in combined:
-        return 'Gemini'
-    if 'claude' in combined or 'placeholder_m35' in combined or 'placeholder_m26' in combined:
-        return 'Claude'
-    if 'gpt' in combined or 'gpt-oss' in combined:
-        return 'GPT'
-    return 'Other'
+    return _antigravity_usage.model_family(label, model_id)
 
 
 def export_antigravity_quota() -> list[QuotaSnapshot]:
-    """Fetch per-model-family quota snapshots from the running Antigravity LS.
-
-    Calls ``GetCascadeModelConfigData`` via the local gRPC HTTP endpoint. Each
-    model entry has a ``quotaInfo`` with ``remainingFraction`` (0-1, 1 = full)
-    and ``resetTime`` (ISO UTC). Models are grouped by family (Gemini, Claude,
-    GPT) and the highest used percentage per family is reported.
-
-    Returns [] when no LS is running or the call fails.
-    """
-    connections = _discover_antigravity_connections()
-    if not connections:
-        return []
-
-    response = None
-    for conn in connections:
-        response = _antigravity_rpc(conn, 'GetCascadeModelConfigData', {})
-        if response:
-            break
-    if not response:
-        return []
-
-    configs = response.get('clientModelConfigs', [])
-    if not isinstance(configs, list):
-        return []
-
-    # Group by family, track max used percentage and earliest reset
-    families: dict[str, dict] = {}
-    for config in configs:
-        if not isinstance(config, dict):
-            continue
-        label = config.get('label', '')
-        model_id = config.get('modelOrAlias', {}).get('model', '') if isinstance(config.get('modelOrAlias'), dict) else ''
-        qi = config.get('quotaInfo', {})
-        if not isinstance(qi, dict):
-            continue
-        remaining = qi.get('remainingFraction')
-        if remaining is None or not isinstance(remaining, (int, float)):
-            continue
-        reset_iso = qi.get('resetTime')
-        family = _antigravity_model_family(label, model_id)
-        used_pct = int(round((1 - remaining) * 100))
-        used_pct = max(0, min(100, used_pct))
-        existing = families.get(family)
-        if existing is None or used_pct > existing['percentage']:
-            families[family] = {
-                'percentage': used_pct,
-                'reset_iso': reset_iso,
-            }
-
-    snapshots: list[QuotaSnapshot] = []
-    for family, info in sorted(families.items()):
-        reset_iso = info.get('reset_iso')
-        reset_ms: int | None = None
-        reset_iso_local: str | None = None
-        if reset_iso:
-            try:
-                dt = datetime.fromisoformat(reset_iso.replace('Z', '+00:00'))
-                reset_ms = int(dt.timestamp() * 1000)
-                reset_iso_local = dt.astimezone().replace(tzinfo=None).isoformat(timespec='minutes')
-            except ValueError:
-                pass
-        snapshots.append(QuotaSnapshot(
-            provider='antigravity',
-            label=f'{family} 5h',
-            percentage=info['percentage'],
-            next_reset_time_ms=reset_ms,
-            next_reset_iso=reset_iso_local,
-        ))
-    return snapshots
+    return cast(
+        list[QuotaSnapshot],
+        _antigravity_usage.export_quota(
+            discover=_discover_antigravity_connections,
+            rpc_call=_antigravity_rpc,
+            family_for_model=_antigravity_model_family,
+        ),
+    )
 
 
 def parse_codex_event_time(timestamp: str) -> datetime:

@@ -28,6 +28,7 @@ markers = [
 
 [tool.setuptools]
 py-modules = [
+    "antigravity_usage",
     "auto_usage",
     "codex_usage",
     "dashboard_models",
