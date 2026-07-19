@@ -44,7 +44,24 @@ Expected shape:
 - top-level keys: `meta`, `summary`, `daily`
 - `meta.generated_at` advances after a successful refresh instead of staying on an old cached timestamp
 
-This smoke test may read real local usage sources. Use it only in a private environment.
+Quota automation check:
+
+```bash
+curl -s http://127.0.0.1:7995/api/v1/quotas
+```
+
+Expected shape:
+
+- top-level keys: `generated_at`, `quotas`
+- each quota contains `provider`, `label`, `used_percentage`, and `remaining_percentage`
+- `used_percentage + remaining_percentage == 100`
+- reset fields are `next_reset_time_ms` and `next_reset_iso`, or null when unavailable
+- GET reads memory or `token_usage_eink.json` and never forces provider refreshes
+- when neither cache exists, the endpoint returns `generated_at=null` and `quotas=[]`
+
+The first full dashboard request may read real local usage sources if no cache
+exists. The quota endpoint is cache-only. Use service smoke tests only in a
+private environment.
 
 ## Host-Side Firmware Logic Tests
 

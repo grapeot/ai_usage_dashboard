@@ -2,6 +2,9 @@ from datetime import datetime
 import json
 from pathlib import Path
 import sys
+import threading
+import time
+from concurrent.futures import ThreadPoolExecutor
 
 from fastapi.testclient import TestClient
 
@@ -65,6 +68,111 @@ def test_get_token_usage_json_returns_dashboard_shape(monkeypatch):
     assert body["daily"] == []
 
 
+def test_get_quotas_returns_compact_automation_shape(monkeypatch):
+    payload = {
+        "meta": {"generated_at": "2026-07-11T22:47:45"},
+        "summary": {},
+        "daily": [],
+        "quotas": [
+            {
+                "provider": "codex",
+                "label": "5h",
+                "percentage": 29,
+                "next_reset_time_ms": 1783842841000,
+                "next_reset_iso": "2026-07-12T00:54:01",
+            },
+            {
+                "provider": "glm",
+                "label": "monthly-tools",
+                "percentage": 25,
+                "usage": 1000,
+                "remaining": 3000,
+            },
+        ],
+    }
+    monkeypatch.setattr(local_display_service, "_cached_payload", payload)
+
+    response = TestClient(local_display_service.app).get("/api/v1/quotas")
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "generated_at": "2026-07-11T22:47:45",
+        "quotas": [
+            {
+                "provider": "codex",
+                "label": "5h",
+                "used_percentage": 29,
+                "remaining_percentage": 71,
+                "next_reset_time_ms": 1783842841000,
+                "next_reset_iso": "2026-07-12T00:54:01",
+                "usage": None,
+                "remaining": None,
+            },
+            {
+                "provider": "glm",
+                "label": "monthly-tools",
+                "used_percentage": 25,
+                "remaining_percentage": 75,
+                "next_reset_time_ms": None,
+                "next_reset_iso": None,
+                "usage": 1000,
+                "remaining": 3000,
+            },
+        ],
+    }
+
+
+def test_get_quotas_reuses_cache_without_refresh(monkeypatch):
+    monkeypatch.setattr(local_display_service, "_cached_payload", {
+        "meta": {"generated_at": "2026-07-11T22:47:45"},
+        "summary": {},
+        "daily": [],
+        "quotas": [],
+    })
+    monkeypatch.setattr(local_display_service, "generate_latest_payload", lambda: (_ for _ in ()).throw(AssertionError("unexpected refresh")))
+
+    response = TestClient(local_display_service.app).get("/api/v1/quotas")
+
+    assert response.status_code == 200
+    assert response.json() == {"generated_at": "2026-07-11T22:47:45", "quotas": []}
+
+
+def test_get_quotas_reads_disk_without_refresh(monkeypatch, tmp_path):
+    payload_path = tmp_path / "token_usage_eink.json"
+    payload_path.write_text(json.dumps({
+        "meta": {"generated_at": "2026-07-11T22:47:45"},
+        "summary": {},
+        "daily": [],
+        "quotas": [{"provider": "codex", "label": "7d", "percentage": 13}],
+    }))
+    monkeypatch.setattr(local_display_service, "_cached_payload", None)
+    monkeypatch.setattr(local_display_service, "_payload_path", payload_path)
+    monkeypatch.setattr(local_display_service, "generate_latest_payload", lambda: (_ for _ in ()).throw(AssertionError("unexpected refresh")))
+
+    response = TestClient(local_display_service.app).get("/api/v1/quotas")
+
+    assert response.status_code == 200
+    assert response.json()["quotas"][0]["remaining_percentage"] == 87
+
+
+def test_get_quotas_returns_empty_when_no_cache_exists(monkeypatch, tmp_path):
+    monkeypatch.setattr(local_display_service, "_cached_payload", None)
+    monkeypatch.setattr(local_display_service, "_payload_path", tmp_path / "missing.json")
+    monkeypatch.setattr(local_display_service, "generate_latest_payload", lambda: (_ for _ in ()).throw(AssertionError("unexpected refresh")))
+
+    response = TestClient(local_display_service.app).get("/api/v1/quotas")
+
+    assert response.status_code == 200
+    assert response.json() == {"generated_at": None, "quotas": []}
+
+
+def test_get_quotas_has_typed_openapi_response():
+    schema = TestClient(local_display_service.app).get("/openapi.json").json()
+
+    response_schema = schema["paths"]["/api/v1/quotas"]["get"]["responses"]["200"]["content"]["application/json"]["schema"]
+    assert response_schema == {"$ref": "#/components/schemas/QuotasResponse"}
+
+
 def test_post_update_returns_fresh_dashboard_shape(monkeypatch):
     payload = {
         "meta": {"version": 1, "generated_at": "2026-04-01T10:00:00"},
@@ -86,6 +194,55 @@ def test_post_update_returns_fresh_dashboard_shape(monkeypatch):
     assert body["summary"]["total_tokens"] == 42
     assert body["daily"][0]["date"] == "2026-04-01"
     assert body["daily"][0]["total_tokens"] == 42
+
+
+def test_post_update_serializes_concurrent_refreshes(monkeypatch):
+    state_lock = threading.Lock()
+    first_started = threading.Event()
+    release_first = threading.Event()
+    active = 0
+    max_active = 0
+    call_count = 0
+
+    def generate():
+        nonlocal active, max_active, call_count
+        with state_lock:
+            active += 1
+            max_active = max(max_active, active)
+            call_count += 1
+            current_call = call_count
+        if current_call == 1:
+            first_started.set()
+            assert release_first.wait(timeout=2)
+        with state_lock:
+            active -= 1
+        return {
+            "meta": {"version": 1, "generated_at": f"refresh-{current_call}"},
+            "summary": {"total_tokens": current_call},
+            "daily": [],
+        }
+
+    monkeypatch.setattr(local_display_service, "_cached_payload", None)
+    monkeypatch.setattr(local_display_service, "generate_latest_payload", generate)
+    request = local_display_service.UpdateRequest(
+        reason="force_button",
+        view="7d",
+        device_id="example-device",
+    )
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        first = executor.submit(local_display_service.display_update, request)
+        assert first_started.wait(timeout=2)
+        second = executor.submit(local_display_service.display_update, request)
+        time.sleep(0.05)
+        with state_lock:
+            assert call_count == 1
+        release_first.set()
+        first.result(timeout=2)
+        second.result(timeout=2)
+
+    assert call_count == 2
+    assert max_active == 1
 
 
 def test_get_token_usage_json_falls_back_to_disk_when_refresh_fails(monkeypatch, tmp_path):

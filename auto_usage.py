@@ -2048,6 +2048,7 @@ def calc_antigravity_cost(detailed: dict[date, dict[str, dict[str, int]]]) -> Da
                 input_tokens=tok['input'] + tok['cache_read'],
                 output_tokens=tok['output'],
                 cached_tokens=tok['cache_read'],
+                cache_write_tokens=tok['cache_write'],
             )
     return dict(result)
 
