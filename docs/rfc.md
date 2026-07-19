@@ -309,15 +309,45 @@ When `responseId` is present in the usage entry, it is used as a dedup key
 across multiple LS processes (multiple Antigravity windows). Entries with the
 same `responseId` are counted once.
 
-### 16.8 Functions Added To `auto_usage.py`
+### 16.8 Module Boundary And Compatibility Facade
 
-- `discover_antigravity_ls()` → `list[AntigravityConnection]` (pid, port, csrf)
-- `antigravity_rpc(connection, method, body)` → `dict` (HTTP/JSON gRPC)
-- `fetch_antigravity_trajectories(connections)` → `list[dict]` (cascadeId, …)
-- `fetch_antigravity_usage(connection, cascade_id)` → `list[UsageEntry]`
-- `classify_antigravity_model(model_id)` → `str` (bucket name)
-- `load_antigravity()` → `dict[str, dict[date, int]]` (per-bucket daily tokens)
-- `calc_antigravity_cost(daily_by_model)` → `DailyCosts`
+Antigravity is implemented in the top-level `antigravity_usage.py` module. It
+owns provider-specific process discovery, RPC transport, response parsing,
+cache and sync metadata, aggregation, cost, and quota behavior. It does not
+import `auto_usage`.
+
+`auto_usage.py` remains the command-line entry point, dashboard composition
+root, and compatibility facade. Its Antigravity functions are intentionally
+thin wrappers rather than aliases: they pass the current facade discovery,
+RPC, trajectory, cache, sync, parsing, classification, and pricing helpers to
+the provider module at call time. This preserves established imports and the
+project's `patch("auto_usage.<symbol>")` test seams without creating a circular
+dependency.
+
+```text
+auto_usage -> antigravity_usage -> pricing_config
+```
+
+Compatibility invariants:
+
+- Existing imports from `auto_usage` continue to resolve, including private
+  Antigravity helpers used by tests and local scripts.
+- Project patch seams for Antigravity discovery, RPC, trajectories, cache,
+  sync metadata, parsing, classification, and pricing continue to affect
+  high-level calls. Rebinding unrelated implementation globals such as
+  `auto_usage.datetime` is not part of this contract.
+- `ANTIGRAVITY_CACHE_FILE` and `ANTIGRAVITY_SYNC_METADATA_FILE` are resolved
+  when their helpers run, so tests and callers may redirect them dynamically.
+- Cache format, deduplication, sync metadata, model buckets, quota shape,
+  pricing, CLI commands, and dashboard API contracts remain unchanged.
+- `antigravity_usage` stays in `pyproject.toml` as an installed top-level module
+  so direct script execution, editable installs, and wheel installs behave the
+  same way.
+
+Future extraction should remain incremental. Active-time calculation and
+Claude-specific usage are reasonable later boundaries, but each should land as
+a separate behavior-preserving change behind the same facade pattern rather
+than rewriting the entire script at once.
 
 ### 16.9 Cost Estimation
 

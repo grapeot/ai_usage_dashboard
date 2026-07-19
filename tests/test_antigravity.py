@@ -299,6 +299,26 @@ class TestFetchTrajectories:
 
 
 class TestLoadAntigravity:
+    def test_facade_passes_runtime_collaborators(self):
+        with patch('auto_usage._discover_antigravity_connections') as discover, \
+             patch('auto_usage._antigravity_rpc') as rpc_call, \
+             patch('auto_usage.fetch_antigravity_trajectories') as fetch, \
+             patch('auto_usage._load_antigravity_cache') as load_cached, \
+             patch('auto_usage._save_antigravity_cache') as save_cached, \
+             patch('auto_usage._load_antigravity_sync_metadata') as load_sync, \
+             patch('auto_usage._save_antigravity_sync_metadata') as save_sync, \
+             patch('auto_usage._antigravity_usage.load_usage', return_value={}) as delegated:
+            load_antigravity()
+
+        kwargs = delegated.call_args.kwargs
+        assert kwargs['discover'] is discover
+        assert kwargs['rpc_call'] is rpc_call
+        assert kwargs['fetch'] is fetch
+        assert kwargs['load_cached'] is load_cached
+        assert kwargs['save_cached'] is save_cached
+        assert kwargs['load_sync'] is load_sync
+        assert kwargs['save_sync'] is save_sync
+
     def test_no_connections_returns_empty(self):
         with patch('auto_usage._discover_antigravity_connections', return_value=[]), \
              patch('auto_usage._load_antigravity_cache', return_value=[]), \
