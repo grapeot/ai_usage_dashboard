@@ -412,6 +412,46 @@ class TestLoadAntigravity:
         assert 'shared-id' in saved_rids
         assert 'new-id' in saved_rids
 
+    def test_load_missing_cascades_from_disk_db(self):
+        conn = AntigravityConnection(pid=1, port=9999, csrf_token="x")
+        mock_resp = {
+            "generatorMetadata": [
+                {
+                    "chatModel": {
+                        "responseModel": "gemini-3-flash-a",
+                        "retryInfos": [
+                            {"usage": {"inputTokens": 1000, "outputTokens": 200, "cacheReadTokens": 5000, "responseId": "r1", "timestamp": 1711447200000}}
+                        ],
+                    }
+                }
+            ]
+        }
+        
+        # Mock sqlite3 connection
+        mock_conn = MagicMock()
+        mock_cursor = MagicMock()
+        # First call is sqlite_master table check -> returns ('gen_metadata',)
+        # Second call is SELECT COUNT(*) -> returns (5,)
+        mock_cursor.fetchone.side_effect = [('gen_metadata',), (5,)]
+        mock_conn.cursor.return_value = mock_cursor
+        
+        with patch('os.path.exists', return_value=True), \
+             patch('glob.glob', return_value=['/mock/conversations/12345-uuid.db']), \
+             patch('sqlite3.connect', return_value=mock_conn), \
+             patch('auto_usage._discover_antigravity_connections', return_value=[conn]), \
+             patch('auto_usage.fetch_antigravity_trajectories', return_value=[]), \
+             patch('auto_usage._antigravity_rpc', return_value=mock_resp) as mock_rpc, \
+             patch('auto_usage._load_antigravity_cache', return_value=[]), \
+             patch('auto_usage._save_antigravity_cache'):
+            result = load_antigravity()
+            
+        # Verify that we queried the LS for the cascade ID from the disk database
+        mock_rpc.assert_called_with(conn, 'GetCascadeTrajectoryGeneratorMetadata', {'cascadeId': '12345-uuid'})
+        assert result['gemini'] != {}
+        total = sum(result['gemini'].values())
+        assert total == 6200
+
+
 
 class TestCalcAntigravityCost:
     def test_gemini_flash_cost(self):
