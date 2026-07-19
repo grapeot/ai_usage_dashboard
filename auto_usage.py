@@ -1725,6 +1725,30 @@ def parse_antigravity_usage_response(
 
 
 ANTIGRAVITY_CACHE_FILE = os.path.join(SCRIPT_DIR, 'antigravity_usage_cache.json')
+ANTIGRAVITY_SYNC_METADATA_FILE = os.path.join(SCRIPT_DIR, 'antigravity_sync_metadata.json')
+
+
+def _load_antigravity_sync_metadata() -> dict[str, list[int]]:
+    """Load Antigravity session sync metadata (mapping session_id to list of synced gen_idx)."""
+    if not os.path.exists(ANTIGRAVITY_SYNC_METADATA_FILE):
+        return {}
+    try:
+        with open(ANTIGRAVITY_SYNC_METADATA_FILE, 'r', encoding='utf-8') as f:
+            data = json.load(f)
+            if isinstance(data, dict):
+                return {k: list(v) for k, v in data.items() if isinstance(v, list)}
+    except Exception:
+        pass
+    return {}
+
+
+def _save_antigravity_sync_metadata(metadata: dict[str, list[int]]) -> None:
+    """Save Antigravity session sync metadata to disk."""
+    try:
+        with open(ANTIGRAVITY_SYNC_METADATA_FILE, 'w', encoding='utf-8') as f:
+            json.dump(metadata, f, indent=2)
+    except Exception:
+        pass
 
 
 def _load_antigravity_cache() -> list[dict]:
@@ -1873,15 +1897,10 @@ def load_antigravity() -> dict[str, DailyTokens]:
     # on disk and check if we are missing any generation indices in our cache.
     import glob
     import sys
-    cache_indices: dict[str, set[int]] = defaultdict(set)
-    for e in cached:
-        sid = e.get('session_id')
-        gidx = e.get('gen_idx')
-        if sid and gidx is not None:
-            try:
-                cache_indices[sid].add(int(gidx))
-            except (ValueError, TypeError):
-                pass
+    
+    sync_meta = _load_antigravity_sync_metadata()
+    cascades_in_cache = {e.get('session_id') for e in cached if e.get('session_id')}
+    sync_meta_updated = False
 
     db_dirs = [
         os.path.expanduser('~/.gemini/antigravity-ide/conversations'),
@@ -1911,7 +1930,7 @@ def load_antigravity() -> dict[str, DailyTokens]:
 
     to_query: set[str] = set()
     for cid, db_indices in discovered_cascades.items():
-        cached_indices = cache_indices[cid]
+        cached_indices = set(sync_meta.get(cid, []))
         if not db_indices.issubset(cached_indices):
             to_query.add(cid)
 
@@ -1951,11 +1970,19 @@ def load_antigravity() -> dict[str, DailyTokens]:
                         'gen_idx': e.get('gen_idx'),
                     }
                     all_entries.append(cache_entry)
+                
+                # Mark as fully synchronized up to the current count of generations in response
+                meta = resp.get('generatorMetadata', [])
+                if isinstance(meta, list):
+                    sync_meta[cid] = list(range(len(meta)))
+                    sync_meta_updated = True
                 break
 
-    # 3. Write merged entries back to cache
+    # 3. Write merged entries and sync metadata back to cache
     if all_entries:
         _save_antigravity_cache(all_entries)
+    if sync_meta_updated:
+        _save_antigravity_sync_metadata(sync_meta)
 
     # 4. Aggregate by date + bucket
     totals: dict[str, defaultdict[date, int]] = {
