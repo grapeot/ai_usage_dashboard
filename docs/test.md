@@ -84,7 +84,7 @@ These require a real E1002 device:
 Before public publication, run:
 
 ```bash
-git check-ignore .env token_usage_eink.json token_usage_dashboard.png usage.json cursor.csv glm.json update.log tmp/example.txt
+git check-ignore .env token_usage_eink.json token_usage_dashboard.png usage.json cursor.csv glm.json update.log antigravity_sync_metadata.json tmp/example.txt
 ```
 
 Also scan public files for fixed LAN IPs, personal absolute paths, private deployment hostnames, old workspace paths, and secret-manager references. The scan should produce no matches in public files.
