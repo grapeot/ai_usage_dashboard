@@ -179,3 +179,7 @@ sqlite3 ~/.gemini/antigravity-ide/conversations/<uuid>.db \
 sqlite3 ~/.gemini/antigravity-ide/conversations/<uuid>.db \
   "SELECT idx, size FROM gen_metadata ORDER BY idx"
 ```
+
+## 更新（2026-07-20）：app_data_dir 切换
+
+Antigravity 新版本把 `--app_data_dir` 从 `antigravity` 切到 `antigravity-cli`，conversation DB 现在写到 `~/.gemini/antigravity-cli/conversations/*.db`，而不是 `~/.gemini/antigravity/conversations/` 或 `~/.gemini/antigravity-ide/conversations/`。`auto_usage.load_antigravity()` 的 `conversation_dirs` 已加入新路径。如果 dashboard 突然不再有当天 token 数据，先用 `lsof -p <LS_PID> | grep conversations` 确认 LS 实际打开的 DB 路径。

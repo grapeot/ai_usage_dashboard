@@ -1531,6 +1531,7 @@ def load_antigravity() -> dict[str, DailyTokens]:
         conversation_dirs=[
             os.path.expanduser('~/.gemini/antigravity-ide/conversations'),
             os.path.expanduser('~/.gemini/antigravity/conversations'),
+            os.path.expanduser('~/.gemini/antigravity-cli/conversations'),
         ],
     )
 
