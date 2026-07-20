@@ -376,9 +376,10 @@ appear in existing buckets (primarily Gemini).
 When the Language Server is restarted (e.g., when the IDE is closed and reopened), the LS memory is cleared, and `GetAllCascadeTrajectories` returns an empty list. To ensure historical session usage from the same day is not lost, the dashboard implements a hybrid discovery strategy:
 
 1. **Local DB Scan**: The tool scans the local Antigravity directories on disk (opening SQLite connections safely in read-only mode, with `mode=ro`):
-   - `~/.gemini/antigravity-ide/conversations/*.db`
-   - `~/.gemini/antigravity/conversations/*.db`
-   The basename of each `.db` file (without extension) corresponds to its `cascadeId`.
+    - `~/.gemini/antigravity-ide/conversations/*.db`
+    - `~/.gemini/antigravity/conversations/*.db`
+    - `~/.gemini/antigravity-cli/conversations/*.db`
+    The basename of each `.db` file (without extension) corresponds to its `cascadeId`.
 
 2. **Generation Index Check**: For each discovered database, the tool queries the `idx` column from its `gen_metadata` table to obtain the set of generation indices (`db_indices`).
    Each cache entry tracks a `gen_idx` field matching the 0-based generation index from the LS metadata. The tool collects all cached `gen_idx` values for that session (`cached_indices`).

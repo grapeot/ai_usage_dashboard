@@ -1,5 +1,6 @@
 """Tests for Google Antigravity IDE token usage integration."""
 import json
+import os
 import sys
 from datetime import date, datetime
 from pathlib import Path
@@ -318,6 +319,17 @@ class TestLoadAntigravity:
         assert kwargs['save_cached'] is save_cached
         assert kwargs['load_sync'] is load_sync
         assert kwargs['save_sync'] is save_sync
+
+    def test_facade_includes_all_conversation_dirs(self):
+        """Conversation dirs must include antigravity-cli (newer Antigravity builds
+        switched the app_data_dir from 'antigravity' to 'antigravity-cli')."""
+        with patch('auto_usage._antigravity_usage.load_usage', return_value={}) as delegated:
+            load_antigravity()
+        dirs = delegated.call_args.kwargs['conversation_dirs']
+        expanded = {os.path.expanduser(d) for d in dirs}
+        assert os.path.expanduser('~/.gemini/antigravity-ide/conversations') in expanded
+        assert os.path.expanduser('~/.gemini/antigravity/conversations') in expanded
+        assert os.path.expanduser('~/.gemini/antigravity-cli/conversations') in expanded
 
     def test_no_connections_returns_empty(self):
         with patch('auto_usage._discover_antigravity_connections', return_value=[]), \
