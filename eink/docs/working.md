@@ -16,8 +16,8 @@
 
 ## Lessons
 
-- E1002 works in Arduino with `ESP32S3 Dev Module` plus `BOARD_SCREEN_COMBO 521` through Seeed_GFX.
-- `Seeed_GFX` may warn about unknown board default SPI settings at 1MHz; this is a note, not a compile or runtime blocker for the current stage.
+- E1002 is verified with `XIAO_ESP32S3`, ESP32 core `3.3.10`, OPI PSRAM, QIO, and `BOARD_SCREEN_COMBO 521` through Seeed_GFX. This board selection avoids the unknown-board 1MHz SPI fallback.
+- Arduino's bundled `ctags 5.8-arduino11` must remain in place. Homebrew `universal-ctags` produces incompatible sketch prototypes; restore the bundled tool and rebuild with `--clean` if it was replaced.
 - Real Wi-Fi credentials must stay in local `secrets.h` and out of the repo.
 - The first native port should prioritize structural fidelity over building a generic widget system.
 - On color e-paper, title, legend, small text, and border density fail first. Remove information before adding features.

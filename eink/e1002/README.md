@@ -36,10 +36,13 @@ Arduino will include `driver.h` and `secrets.h` from the same directory.
 
 ## Board Settings
 
-- Board: `ESP32S3 Dev Module`
-- PSRAM: `OPI PSRAM` or `Enabled`
+- Board: `XIAO ESP32S3`
+- ESP32 board package: `3.3.10`
+- PSRAM: `OPI PSRAM`
 - Flash Mode: `QIO 80MHz`
 - Upload Speed: start with `115200`
+
+E1002 uses `BOARD_SCREEN_COMBO 521` from `driver.h`. On this hardware, use `Serial1` on GPIO 44/43 for debug logs. Do not replace Arduino's bundled `ctags 5.8-arduino11` with Homebrew `universal-ctags`: Arduino's sketch preprocessor requires the bundled output format. If the tool was changed, restore it through Arduino/Board Manager and rebuild with `--clean`.
 
 ## Libraries
 
@@ -129,4 +132,4 @@ If upload is unstable:
 - Green and white buttons are configured as light-sleep wake sources.
 - The buzzer uses `GPIO45` for short wake confirmation tones.
 - The device uses light sleep; the automatic update window is controlled by synchronized local time.
-- Compile: `arduino-cli compile --fqbn esp32:esp32:esp32s3:PSRAM=opi,FlashMode=qio,UploadSpeed=115200 eink/e1002/e1002.ino`
+- Compile: `arduino-cli compile --clean --fqbn esp32:esp32:XIAO_ESP32S3:PSRAM=opi,FlashMode=qio,UploadSpeed=115200,USBMode=default,CDCOnBoot=cdc eink/e1002/e1002.ino`

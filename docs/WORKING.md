@@ -2,6 +2,11 @@
 
 ## Changelog
 
+### 2026-07-21
+
+- Corrected E1002 Arduino guidance from `ESP32S3 Dev Module` to the hardware-verified `XIAO_ESP32S3` configuration: ESP32 core `3.3.10`, OPI PSRAM, QIO, `BOARD_SCREEN_COMBO 521`, and 115200 upload speed.
+- Recorded that Homebrew `universal-ctags` is incompatible with Arduino sketch prototype generation. Restore Arduino's bundled `ctags 5.8-arduino11` and use `--clean` after a replacement.
+
 ### 2026-05-25
 
 - Began public-repo scaffold pass.
