@@ -80,11 +80,12 @@ If `arduino-cli` and the ESP32 board package are installed, compile the E1002 sk
 
 ```bash
 arduino-cli compile \
-  --fqbn esp32:esp32:esp32s3:PSRAM=opi,FlashSize=32M,PartitionScheme=huge_app,CDCOnBoot=cdc,UploadSpeed=115200 \
+  --clean \
+  --fqbn esp32:esp32:XIAO_ESP32S3:PSRAM=opi,FlashMode=qio,UploadSpeed=115200,USBMode=default,CDCOnBoot=cdc \
   eink/e1002/e1002.ino
 ```
 
-This catches header/include mistakes, symbol visibility mistakes, sketch size regressions, and Arduino API misuse.
+This catches header/include mistakes, symbol visibility mistakes, sketch size regressions, and Arduino API misuse. It is the E1002 configuration verified on 2026-07-21 with ESP32 core `3.3.10`; do not replace Arduino's bundled `ctags 5.8-arduino11` with Homebrew `universal-ctags`, because Arduino's sketch preprocessor requires the bundled output format.
 
 ## Manual Hardware Smoke Tests
 
