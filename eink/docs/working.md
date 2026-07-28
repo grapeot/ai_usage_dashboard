@@ -13,6 +13,7 @@
 - Switched the device to a 1-hour light-sleep wake cycle.
 - Added green-button force update and white-button 7D/30D view switching.
 - Added a short buzzer confirmation tone for button wake events.
+- Fixed scheduled updates to use Pacific Time with automatic PST/PDT transitions. `configTime(0, 0, ...)` reset the ESP32 timezone to UTC; `configTzTime(...)` preserves the configured POSIX timezone rule.
 
 ## Lessons
 
@@ -21,3 +22,4 @@
 - Real Wi-Fi credentials must stay in local `secrets.h` and out of the repo.
 - The first native port should prioritize structural fidelity over building a generic widget system.
 - On color e-paper, title, legend, small text, and border density fail first. Remove information before adding features.
+- Use `configTzTime()` when scheduling by local civil time. Calling `configTime()` with a zero offset overrides an earlier `TZ` environment setting with UTC.
