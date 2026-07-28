@@ -45,6 +45,14 @@ def test_auto_update_window_11pm_is_disabled():
     assert is_within_auto_update_window(datetime(2026, 4, 1, 23, 0)) is False
 
 
+def test_firmware_clock_sync_preserves_pacific_timezone():
+    network_header = (
+        Path(__file__).resolve().parent.parent / "eink" / "e1002" / "dashboard_network.h"
+    ).read_text()
+    assert "configTzTime(timeZone, ntpServer1, ntpServer2);" in network_header
+    assert "configTime(0, 0, ntpServer1, ntpServer2);" not in network_header
+
+
 def test_toggle_view_mode_flips_7d_to_30d():
     assert toggle_view_mode(SEVEN_DAYS) == THIRTY_DAYS
 

@@ -83,9 +83,7 @@ inline bool connectWifi(const char* ssid, const char* password, uint32_t wifiTim
 }
 
 inline bool syncLocalClock(const char* timeZone, const char* ntpServer1, const char* ntpServer2) {
-  setenv("TZ", timeZone, 1);
-  tzset();
-  configTime(0, 0, ntpServer1, ntpServer2);
+  configTzTime(timeZone, ntpServer1, ntpServer2);
   struct tm timeinfo;
   if (!getLocalTime(&timeinfo, 10000)) {
     Serial.println("[time] sync failed");
