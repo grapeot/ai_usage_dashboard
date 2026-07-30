@@ -35,6 +35,24 @@ inline void drawLegendItemStriped(EPaper& epaper, int x, int y, uint16_t fillCol
   epaper.drawString(label, x + 18, y - 1);
 }
 
+// White fill with a sparse black dot grid (Gemini legend/bars).
+inline void drawDotPattern(EPaper& epaper, int rx, int ry, int w, int h, int spacing = 4) {
+  for (int y = 1; y < h; y += spacing) {
+    for (int x = 1; x < w; x += spacing) {
+      epaper.drawPixel(rx + x, ry + y, TFT_BLACK);
+    }
+  }
+}
+
+inline void drawLegendItemDotted(EPaper& epaper, int x, int y, uint16_t fillColor, const String& label) {
+  epaper.fillRect(x, y, 12, 12, fillColor);
+  drawDotPattern(epaper, x, y, 12, 12, 3);
+  epaper.drawRect(x, y, 12, 12, TFT_BLACK);
+  epaper.setTextColor(TFT_BLACK, TFT_WHITE);
+  epaper.setTextSize(1);
+  epaper.drawString(label, x + 18, y - 1);
+}
+
 inline void drawAxisAndTicks(EPaper& epaper, const ChartRect& rect, double maxValue, const char* axisLabel, int tickCount) {
   epaper.drawRect(rect.x, rect.y, rect.w, rect.h, TFT_BLACK);
   epaper.setTextColor(TFT_BLACK, TFT_WHITE);
@@ -72,7 +90,7 @@ inline void drawStackedChart(EPaper& epaper, const DashboardData& data, const Ch
       uint64_t value;
       uint16_t color;
       bool borderOnly;
-      bool striped;
+      bool dotted;
     } segments[] = {
         {data.daily[i].cursor, TFT_WHITE, true, false},
         {data.daily[i].glm, TFT_GREEN, false, false},
@@ -80,6 +98,7 @@ inline void drawStackedChart(EPaper& epaper, const DashboardData& data, const Ch
         {data.daily[i].claude, TFT_RED, false, false},
         {data.daily[i].gpt, TFT_YELLOW, false, false},
         {data.daily[i].deepseek, TFT_BLUE, false, false},
+        {data.daily[i].grok, TFT_CYAN, false, false},
         {data.daily[i].other, TFT_BLACK, false, false},
     };
 
@@ -92,8 +111,8 @@ inline void drawStackedChart(EPaper& epaper, const DashboardData& data, const Ch
       yBottom -= height;
       if (!segment.borderOnly) {
         epaper.fillRect(x, yBottom, barWidth, height, segment.color);
-        if (segment.striped) {
-          drawDiagonalStripes(epaper, x, yBottom, barWidth, height);
+        if (segment.dotted) {
+          drawDotPattern(epaper, x, yBottom, barWidth, height);
         }
       }
       epaper.drawRect(x, yBottom, barWidth, height, TFT_BLACK);
@@ -223,10 +242,11 @@ inline void renderDashboard(EPaper& epaper,
   drawLegendItem(epaper, 570, 12, TFT_WHITE, "Cursor", true);
   drawLegendItem(epaper, 640, 12, TFT_GREEN, "GLM");
   drawLegendItem(epaper, 715, 12, TFT_RED, "Claude");
-  drawLegendItemStriped(epaper, 570, 30, TFT_WHITE, "Gemini");
+  drawLegendItemDotted(epaper, 570, 30, TFT_WHITE, "Gemini");
   drawLegendItem(epaper, 640, 30, TFT_YELLOW, "GPT");
   drawLegendItem(epaper, 715, 30, TFT_BLUE, "DeepSeek");
-  drawLegendItem(epaper, 715, 48, TFT_BLACK, "Other");
+  drawLegendItem(epaper, 570, 48, TFT_CYAN, "Grok");
+  drawLegendItem(epaper, 640, 48, TFT_BLACK, "Other");
 
   char batteryBuffer[48];
   snprintf(batteryBuffer, sizeof(batteryBuffer), "Battery: %d%% (%.2fV)", battery.percentage, battery.voltage);

@@ -16,6 +16,10 @@ MODEL_PRICING = {
     "gpt-5.2-codex": {"input": 1.75, "cached": 0.175, "output": 14.0},
     "gpt-5.3-codex": {"input": 1.75, "cached": 0.175, "output": 14.0},
     "grok-4": {"input": 3.0, "cached": 0.75, "output": 15.0},
+    # xAI docs / Cursor: base grok-4.5 = $2/$6; cached input = 25% of input ($0.50).
+    "grok-4.5": {"input": 2.0, "cached": 0.5, "output": 6.0},
+    # Cursor Fast variant for Grok 4.5.
+    "grok-4.5-fast": {"input": 4.0, "cached": 1.0, "output": 18.0},
     "grok-4-1-fast": {"input": 0.2, "cached": 0.05, "output": 0.5},
     "grok-code-fast-1": {"input": 0.2, "cached": 0.02, "output": 1.5},
     "glm-5.1": {"input": 1.4, "cached": 0.26, "output": 4.4},
@@ -50,6 +54,10 @@ MODEL_ALIASES = {
     "grok-4-1-fast-reasoning": "grok-4-1-fast",
     "grok-4-1-fast-non-reasoning": "grok-4-1-fast",
     "grok-4.20-experimental-beta-0304-non-reasoning": "grok-4-1-fast",
+    "xai/grok-4.5": "grok-4.5",
+    "x-ai/grok-4.5": "grok-4.5",
+    "grok-4.5-fast-reasoning": "grok-4.5-fast",
+    "grok-4.5-fast-non-reasoning": "grok-4.5-fast",
     "antigravity-gemini-3-pro": "gemini-3.1-pro-preview",
     "qwen3.5:397b": "qwen3.5-397b-a17b",
     "qwen3.5:397b-cloud": "qwen3.5-397b-a17b",
@@ -64,12 +72,20 @@ def get_pricing(model_id: str) -> Pricing | None:
     model_lower = (model_id or "").lower().strip()
     if not model_lower:
         return None
+    # Strip common provider prefixes from OpenRouter / OpenCode-style ids.
+    if "/" in model_lower:
+        prefix, remainder = model_lower.split("/", 1)
+        if prefix in {"xai", "x-ai", "openrouter", "opencode"} and remainder:
+            model_lower = remainder
     # direct match
     if model_lower in MODEL_PRICING:
         return MODEL_PRICING[model_lower].copy()
     # alias mapping
     if model_lower in MODEL_ALIASES:
         canonical = MODEL_ALIASES[model_lower]
+        return MODEL_PRICING.get(canonical, {}).copy()
+    if (model_id or "").lower().strip() in MODEL_ALIASES:
+        canonical = MODEL_ALIASES[(model_id or "").lower().strip()]
         return MODEL_PRICING.get(canonical, {}).copy()
     # partial match: antigravity-gemini-* -> gemini-*
     if "antigravity-" in model_lower:
@@ -99,6 +115,10 @@ def get_pricing(model_id: str) -> Pricing | None:
         return MODEL_PRICING["grok-build-0.1"].copy()
     if model_lower.startswith("grok-4-1-fast"):
         return MODEL_PRICING["grok-4-1-fast"].copy()
+    if "grok-4.5" in model_lower and "fast" in model_lower:
+        return MODEL_PRICING["grok-4.5-fast"].copy()
+    if model_lower.startswith("grok-4.5") or model_lower == "grok-4.5":
+        return MODEL_PRICING["grok-4.5"].copy()
     if model_lower.startswith("grok-4"):
         return MODEL_PRICING["grok-4"].copy()
     if model_lower.startswith("deepseek-v4-flash"):

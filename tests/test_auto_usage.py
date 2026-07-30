@@ -91,20 +91,24 @@ def test_classify_opencode_bucket_gpt_model_maps_to_gpt_opencode():
     assert classify_opencode_bucket('custom-provider', 'gpt-5.3-codex') == 'gpt_opencode'
 
 
-def test_classify_opencode_bucket_xai_provider_maps_to_other():
-    assert classify_opencode_bucket('xai', 'custom-model') == 'opencode_other'
+def test_classify_opencode_bucket_xai_provider_maps_to_grok():
+    assert classify_opencode_bucket('xai', 'custom-model') == 'grok'
 
 
 def test_classify_opencode_bucket_poe_google_model_maps_to_gemini():
     assert classify_opencode_bucket('poe', 'google/gemini-3.1-pro-preview') == 'gemini'
 
 
-def test_classify_opencode_bucket_poe_xai_model_stays_other():
-    assert classify_opencode_bucket('poe', 'xai/grok-4.20-experimental-beta-0304-non-reasoning') == 'opencode_other'
+def test_classify_opencode_bucket_poe_xai_model_maps_to_grok():
+    assert classify_opencode_bucket('poe', 'xai/grok-4.20-experimental-beta-0304-non-reasoning') == 'grok'
 
 
-def test_classify_opencode_bucket_grok_model_maps_to_other():
-    assert classify_opencode_bucket('custom-provider', 'grok-4.20-experimental-beta-0304-non-reasoning') == 'opencode_other'
+def test_classify_opencode_bucket_grok_model_maps_to_grok():
+    assert classify_opencode_bucket('custom-provider', 'grok-4.20-experimental-beta-0304-non-reasoning') == 'grok'
+
+
+def test_classify_opencode_bucket_grok_45_maps_to_grok():
+    assert classify_opencode_bucket('xai', 'grok-4.5') == 'grok'
 
 
 def test_classify_opencode_bucket_glm_provider_is_excluded_by_default():
@@ -235,6 +239,7 @@ def test_generate_dashboard_keeps_est_cost_column_when_daily_costs_is_empty_dict
         claude={},
         gpt_opencode={date(2026, 3, 12): 100},
         deepseek={},
+        grok={},
         other={},
         start_date='2026-03-12',
         end_date='2026-03-12',
@@ -267,6 +272,7 @@ def test_build_eink_dashboard_payload_emits_minimal_device_friendly_shape():
         claude={date(2026, 3, 12): 20},
         gpt_opencode={date(2026, 3, 12): 100},
         deepseek={},
+        grok={},
         other={},
         start_date='2026-03-12',
         end_date='2026-03-13',
@@ -291,6 +297,7 @@ def test_build_eink_dashboard_payload_emits_minimal_device_friendly_shape():
         'claude': 20,
         'gpt_opencode': 100,
         'deepseek': 0,
+        'grok': 0,
         'other': 0,
     }
     assert len(daily) == 2
@@ -303,6 +310,7 @@ def test_build_eink_dashboard_payload_emits_minimal_device_friendly_shape():
             'claude': 20,
             'gpt_opencode': 100,
             'deepseek': 0,
+            'grok': 0,
             'other': 0,
         },
         'total_tokens': 135,
@@ -686,6 +694,7 @@ def test_load_opencode_from_db_returns_empty_when_db_missing(monkeypatch, tmp_pa
         'gemini': {},
         'glm_opencode': {},
         'deepseek': {},
+        'grok': {},
         'opencode_other': {},
     }
 
@@ -932,6 +941,7 @@ def test_build_eink_dashboard_payload_includes_glm_quota_when_provided():
         claude={},
         gpt_opencode={},
         deepseek={},
+        grok={},
         other={},
         start_date='2026-06-22',
         end_date='2026-06-28',
@@ -952,6 +962,7 @@ def test_build_eink_dashboard_payload_omits_glm_quota_when_empty():
         claude={},
         gpt_opencode={},
         deepseek={},
+        grok={},
         other={},
         start_date='2026-06-22',
         end_date='2026-06-28',
@@ -971,6 +982,7 @@ def test_generate_dashboard_prints_quota_block(capsys):
         claude={},
         gpt_opencode={},
         deepseek={},
+        grok={},
         other={},
         start_date='2026-06-22',
         end_date='2026-06-22',
@@ -1071,7 +1083,7 @@ def test_build_eink_dashboard_payload_includes_unified_quotas_when_provided():
     quotas = normalize_codex_rate_limits(_CODEX_RATE_LIMITS)
 
     payload = build_eink_dashboard_payload(
-        cursor={}, glm={}, gemini={}, claude={}, gpt_opencode={}, deepseek={}, other={},
+        cursor={}, glm={}, gemini={}, claude={}, gpt_opencode={}, deepseek={}, grok={}, other={},
         start_date='2026-06-22', end_date='2026-06-28',
         quotas=quotas,
     )
@@ -1084,7 +1096,7 @@ def test_build_eink_dashboard_payload_includes_unified_quotas_when_provided():
 
 def test_build_eink_dashboard_payload_omits_quotas_when_empty():
     payload = build_eink_dashboard_payload(
-        cursor={}, glm={}, gemini={}, claude={}, gpt_opencode={}, deepseek={}, other={},
+        cursor={}, glm={}, gemini={}, claude={}, gpt_opencode={}, deepseek={}, grok={}, other={},
         start_date='2026-06-22', end_date='2026-06-28',
         quotas=[],
     )

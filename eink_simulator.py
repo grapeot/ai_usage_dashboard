@@ -53,6 +53,7 @@ class DailyEntry:
     claude: int = 0
     gpt: int = 0
     deepseek: int = 0
+    grok: int = 0
     other: int = 0
     total_tokens: int = 0
     ai_hours: float = 0.0
@@ -82,6 +83,7 @@ class DashboardData:
     claude: int = 0
     gpt: int = 0
     deepseek: int = 0
+    grok: int = 0
     other: int = 0
     daily: list[DailyEntry] = field(default_factory=list)
     quotas: list[QuotaWindow] = field(default_factory=list)
@@ -188,6 +190,7 @@ def provider_color(provider: str) -> tuple[int, int, int]:
         "ollama": TFT_CYAN,
         "claude": TFT_RED,
         "antigravity": TFT_CYAN,
+        "grok": TFT_CYAN,
     }.get(provider, TFT_BLACK)
 
 
@@ -321,6 +324,10 @@ class EPaperSim:
             return
         self.draw.rectangle((x, y, x + w - 1, y + h - 1), fill=color)
 
+    def draw_pixel(self, x: int, y: int, color: tuple[int, int, int]) -> None:
+        if 0 <= x < self.width and 0 <= y < self.height:
+            self.image.putpixel((x, y), color)
+
     def draw_rect(self, x: int, y: int, w: int, h: int, color: tuple[int, int, int]) -> None:
         if w <= 0 or h <= 0:
             return
@@ -375,6 +382,19 @@ def draw_legend_item_striped(epaper: EPaperSim, x: int, y: int, fill_color: tupl
     epaper.draw_string(x + 18, y - 1, label)
 
 
+def draw_dot_pattern(epaper: EPaperSim, rx: int, ry: int, w: int, h: int, spacing: int = 4) -> None:
+    for y in range(1, h, spacing):
+        for x in range(1, w, spacing):
+            epaper.draw_pixel(rx + x, ry + y, TFT_BLACK)
+
+
+def draw_legend_item_dotted(epaper: EPaperSim, x: int, y: int, fill_color: tuple[int, int, int], label: str) -> None:
+    epaper.fill_rect(x, y, 12, 12, fill_color)
+    draw_dot_pattern(epaper, x, y, 12, 12, 3)
+    epaper.draw_rect(x, y, 12, 12, TFT_BLACK)
+    epaper.draw_string(x + 18, y - 1, label)
+
+
 def draw_axis_and_ticks(epaper: EPaperSim, rect: ChartRect, max_value: float, axis_label: str, tick_count: int) -> None:
     epaper.draw_rect(rect.x, rect.y, rect.w, rect.h, TFT_BLACK)
     epaper.draw_string(rect.x, rect.y - 14, axis_label)
@@ -404,9 +424,10 @@ def draw_stacked_chart(epaper: EPaperSim, data: DashboardData, rect: ChartRect, 
             (data.daily[i].claude, TFT_RED, False, False),
             (data.daily[i].gpt, TFT_YELLOW, False, False),
             (data.daily[i].deepseek, TFT_BLUE, False, False),
+            (data.daily[i].grok, TFT_CYAN, False, False),
             (data.daily[i].other, TFT_BLACK, False, False),
         ]
-        for value, color, border_only, striped in segments:
+        for value, color, border_only, dotted in segments:
             yi = value / 1e8
             height = scaled_height(yi, max_value, rect.h - 2)
             if height <= 0:
@@ -414,8 +435,8 @@ def draw_stacked_chart(epaper: EPaperSim, data: DashboardData, rect: ChartRect, 
             y_bottom -= height
             if not border_only:
                 epaper.fill_rect(x, y_bottom, bar_width, height, color)
-                if striped:
-                    draw_diagonal_stripes(epaper, x, y_bottom, bar_width, height)
+                if dotted:
+                    draw_dot_pattern(epaper, x, y_bottom, bar_width, height)
             epaper.draw_rect(x, y_bottom, bar_width, height, TFT_BLACK)
         if visible_index % label_stride == 0 or visible_index == count - 1:
             epaper.draw_string(x, rect.y + rect.h + 6, data.daily[i].date_label)
@@ -488,10 +509,11 @@ def render_dashboard(data: DashboardData, battery: BatteryStatus, mode: str = SE
     draw_legend_item(epaper, 570, 12, TFT_WHITE, "Cursor", border_only=True)
     draw_legend_item(epaper, 640, 12, TFT_GREEN, "GLM")
     draw_legend_item(epaper, 715, 12, TFT_RED, "Claude")
-    draw_legend_item_striped(epaper, 570, 30, TFT_WHITE, "Gemini")
+    draw_legend_item_dotted(epaper, 570, 30, TFT_WHITE, "Gemini")
     draw_legend_item(epaper, 640, 30, TFT_YELLOW, "GPT")
     draw_legend_item(epaper, 715, 30, TFT_BLUE, "DeepSeek")
-    draw_legend_item(epaper, 715, 48, TFT_BLACK, "Other")
+    draw_legend_item(epaper, 570, 48, TFT_CYAN, "Grok")
+    draw_legend_item(epaper, 640, 48, TFT_BLACK, "Other")
 
     epaper.draw_string(610, 456, f"Battery: {battery.percentage}% ({battery.voltage:.2f}V)")
 
@@ -524,6 +546,7 @@ def parse_dashboard_payload(payload: dict) -> DashboardData:
     data.claude = int(cats.get("claude", 0))
     data.gpt = int(cats.get("gpt_opencode", 0))
     data.deepseek = int(cats.get("deepseek", 0))
+    data.grok = int(cats.get("grok", 0))
     data.other = int(cats.get("other", 0))
 
     for day in payload.get("daily", []):
@@ -538,6 +561,7 @@ def parse_dashboard_payload(payload: dict) -> DashboardData:
         entry.claude = int(dc.get("claude", 0))
         entry.gpt = int(dc.get("gpt_opencode", 0))
         entry.deepseek = int(dc.get("deepseek", 0))
+        entry.grok = int(dc.get("grok", 0))
         entry.other = int(dc.get("other", 0))
         entry.total_tokens = int(day.get("total_tokens", 0))
         entry.ai_hours = float(day.get("ai_hours", 0.0) or 0.0)
@@ -547,9 +571,13 @@ def parse_dashboard_payload(payload: dict) -> DashboardData:
     for q in payload.get("quotas", []):
         if len(data.quotas) >= _MAX_QUOTAS:
             break
+        provider = str(q.get("provider", ""))
+        label = str(q.get("label", ""))
+        if provider == "antigravity" and "gemini" not in label.lower():
+            continue
         data.quotas.append(QuotaWindow(
-            provider=str(q.get("provider", "")),
-            label=str(q.get("label", "")),
+            provider=provider,
+            label=label,
             percentage=int(q.get("percentage", 0)),
             next_reset_time_ms=int(q.get("next_reset_time_ms", 0) or 0),
             next_reset_iso=str(q.get("next_reset_iso", "")),

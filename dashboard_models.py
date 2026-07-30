@@ -37,6 +37,7 @@ class CategoryTotals(BaseModel):
     claude: int = Field(default=0, description='Total Anthropic Claude tokens for the window (Claude Code plus OpenCode-routed Anthropic).')
     gpt_opencode: int = Field(default=0, description='Total OpenAI GPT tokens for the window, including Codex.')
     deepseek: int = Field(default=0, description='Total DeepSeek tokens for the window.')
+    grok: int = Field(default=0, description='Total xAI Grok tokens for the window (OpenCode xai/grok-* and related routes).')
     other: int = Field(default=0, description='Total tokens from providers not classified into the buckets above.')
 
 
