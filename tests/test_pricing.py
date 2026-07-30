@@ -19,6 +19,10 @@ class TestGetPricing:
         assert get_pricing("gpt-5.2") == {"input": 1.75, "cached": 0.175, "output": 14.0}
         assert get_pricing("gpt-5.3-codex") == {"input": 1.75, "cached": 0.175, "output": 14.0}
         assert get_pricing("grok-4") == {"input": 3.0, "cached": 0.75, "output": 15.0}
+        assert get_pricing("grok-4.5") == {"input": 2.0, "cached": 0.5, "output": 6.0}
+        assert get_pricing("xai/grok-4.5") == {"input": 2.0, "cached": 0.5, "output": 6.0}
+        assert get_pricing("x-ai/grok-4.5") == {"input": 2.0, "cached": 0.5, "output": 6.0}
+        assert get_pricing("grok-4.5-fast") == {"input": 4.0, "cached": 1.0, "output": 18.0}
         assert get_pricing("grok-4-1-fast") == {"input": 0.2, "cached": 0.05, "output": 0.5}
         assert get_pricing("grok-code-fast-1") == {"input": 0.2, "cached": 0.02, "output": 1.5}
         assert get_pricing("glm-5.1") == {"input": 1.4, "cached": 0.26, "output": 4.4}

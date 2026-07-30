@@ -129,6 +129,7 @@ inline bool parseDashboardPayload(const String& payload, DashboardData& data, St
   data.claude = doc["summary"]["categories"]["claude"] | 0ULL;
   data.gpt = doc["summary"]["categories"]["gpt_opencode"] | 0ULL;
   data.deepseek = doc["summary"]["categories"]["deepseek"] | 0ULL;
+  data.grok = doc["summary"]["categories"]["grok"] | 0ULL;
   data.other = doc["summary"]["categories"]["other"] | 0ULL;
 
   data.dailyCount = 0;
@@ -146,6 +147,7 @@ inline bool parseDashboardPayload(const String& payload, DashboardData& data, St
     entry.claude = day["categories"]["claude"] | 0ULL;
     entry.gpt = day["categories"]["gpt_opencode"] | 0ULL;
     entry.deepseek = day["categories"]["deepseek"] | 0ULL;
+    entry.grok = day["categories"]["grok"] | 0ULL;
     entry.other = day["categories"]["other"] | 0ULL;
     entry.totalTokens = day["total_tokens"] | 0ULL;
     entry.aiHours = day["ai_hours"] | 0.0;
@@ -158,9 +160,19 @@ inline bool parseDashboardPayload(const String& payload, DashboardData& data, St
     if (data.quotaCount >= kMaxQuotas) {
       break;
     }
+    String provider = q["provider"] | "";
+    String label = q["label"] | "";
+    // E-ink keeps Antigravity Gemini only; Claude/GPT AG bars stay in the API payload.
+    if (provider == "antigravity") {
+      String lower = label;
+      lower.toLowerCase();
+      if (lower.indexOf("gemini") < 0) {
+        continue;
+      }
+    }
     QuotaWindow& qw = data.quotas[data.quotaCount++];
-    qw.provider = q["provider"] | "";
-    qw.label = q["label"] | "";
+    qw.provider = provider;
+    qw.label = label;
     qw.percentage = q["percentage"] | 0;
     qw.nextResetTimeMs = q["next_reset_time_ms"] | 0ULL;
     qw.nextResetIso = q["next_reset_iso"] | "";

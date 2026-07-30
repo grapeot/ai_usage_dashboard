@@ -44,7 +44,7 @@ def test_dashboard_payload_validates_full_real_shape():
         'daily': [
             {
                 'date': '2026-06-22',
-                'categories': {'cursor': 1, 'glm': 2, 'gemini': 3, 'claude': 0, 'gpt_opencode': 0, 'deepseek': 0, 'other': 0},
+                'categories': {'cursor': 1, 'glm': 2, 'gemini': 3, 'claude': 0, 'gpt_opencode': 0, 'deepseek': 0, 'grok': 0, 'other': 0},
                 'total_tokens': 6,
                 'ai_hours': 8.27,
                 'cost_usd': 1.5,

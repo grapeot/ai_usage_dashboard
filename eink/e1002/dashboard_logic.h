@@ -142,6 +142,9 @@ inline uint16_t providerColor(const String& provider) {
   if (provider == "ollama") {
     return TFT_CYAN;
   }
+  if (provider == "grok") {
+    return TFT_CYAN;
+  }
   if (provider == "claude") {
     return TFT_RED;
   }

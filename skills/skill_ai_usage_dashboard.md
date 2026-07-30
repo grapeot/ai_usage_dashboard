@@ -46,13 +46,17 @@ scripts/update-local-artifacts
 
 - Cursor
 - GLM
+- Gemini
 - Claude
 - GPT
 - DeepSeek
+- Grok
 - Other
 - Total
 - AI Hours
 - Est. $, unless `--no-cost` is used
+
+Optional Grok weekly usage pool: set `GROK_COOKIE` in `.env` (browser cookie from grok.com while logged in). The dashboard calls `POST /grok_api_v2.GrokBuildBilling/GetGrokCreditsConfig` and adds a `provider=grok` weekly quota snapshot. Never commit real cookies.
 
 It may write local artifacts:
 
