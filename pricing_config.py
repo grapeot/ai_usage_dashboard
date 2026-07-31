@@ -29,6 +29,12 @@ MODEL_PRICING = {
     "claude-sonnet-4.6": {"input": 3.0, "cache_read": 0.3, "cache_write": 3.75, "cache_write_1h": 6.0, "output": 15.0},
     "claude-opus-4.6": {"input": 5.0, "cache_read": 0.5, "cache_write": 6.25, "cache_write_1h": 10.0, "output": 25.0},
     "claude-opus-4-6-fast": {"input": 30.0, "cache_read": 3.0, "cache_write": 37.5, "cache_write_1h": 60.0, "output": 150.0},
+    # Anthropic Opus 5 (Jul 24, 2026): same $5/$25 as Opus 4.8; standard Anthropic cache rates.
+    "claude-opus-5": {"input": 5.0, "cache_read": 0.5, "cache_write": 6.25, "cache_write_1h": 10.0, "output": 25.0},
+    # Cursor Composer 2.5 (Cursor official blog): no published cache discount.
+    # Standard $0.50/$2.50; Fast $3.00/$15.00.
+    "cursor-composer-2.5": {"input": 0.5, "output": 2.5},
+    "cursor-composer-2.5-fast": {"input": 3.0, "output": 15.0},
     "claude-fable-5": {"input": 10.0, "cache_read": 1.0, "cache_write": 12.5, "cache_write_1h": 20.0, "output": 50.0},
     "claude-haiku-4.5": {"input": 1.0, "cache_read": 0.1, "cache_write": 1.25, "cache_write_1h": 2.0, "output": 5.0},
     "gemini-3-flash": {"input": 0.5, "output": 3.0},
@@ -98,6 +104,11 @@ def get_pricing(model_id: str) -> Pricing | None:
             return MODEL_PRICING["gemini-3-pro"].copy()
     # Claude variants
     if "opus" in model_lower and "claude" in model_lower:
+        # Opus 5 shares Opus 4.6's base price; Fast is 6x like prior Opus Fast tiers.
+        if "opus-5" in model_lower or "opus-4.6" in model_lower or "opus-4-6" in model_lower:
+            if "fast" in model_lower:
+                return MODEL_PRICING["claude-opus-4-6-fast"].copy()
+            return MODEL_PRICING["claude-opus-5" if "opus-5" in model_lower else "claude-opus-4.6"].copy()
         if "fast" in model_lower:
             return MODEL_PRICING["claude-opus-4-6-fast"].copy()
         return MODEL_PRICING["claude-opus-4.6"].copy()
@@ -137,6 +148,11 @@ def get_pricing(model_id: str) -> Pricing | None:
         return MODEL_PRICING["minimax-m3"].copy()
     if model_lower.startswith("qwen3.5:397b") or model_lower.startswith("qwen3.5-397b"):
         return MODEL_PRICING["qwen3.5-397b-a17b"].copy()
+    # Cursor Composer 2.5 variants (hosted-only; no public cache discount).
+    if "composer-2.5" in model_lower:
+        if "fast" in model_lower:
+            return MODEL_PRICING["cursor-composer-2.5-fast"].copy()
+        return MODEL_PRICING["cursor-composer-2.5"].copy()
     return None
 
 
