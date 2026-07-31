@@ -64,7 +64,7 @@ The screen is split into two vertical zones:
 
 - Title at y=14: `<tokens> tokens | $<cost> | 7D/30D`
 - AI Active Time total at y=30, directly under the title
-- Stacked token bar chart at y=92, height 200: 7 bars (7-day mode) or 30 bars (30-day mode), colored by provider (Cursor=white border, GLM=green, Gemini=dotted white, Claude=red, GPT=yellow, DeepSeek=blue, Grok=cyan, Other=black)
+- Stacked token bar chart at y=92, height 200: 7 bars (7-day mode) or 30 bars (30-day mode), colored by provider (Cursor=white border, GLM=green, Gemini=striped white, Claude=red, GPT=yellow, DeepSeek=blue, Grok=dotted white, Other=black)
 - AI Active Hours chart at y=336, height 88: blue bars, same x-axis as the stacked chart
 - Footer at y=456: `Updated: <timestamp> , Auto 08-22`
 

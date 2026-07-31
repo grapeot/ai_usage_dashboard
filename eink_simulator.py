@@ -190,7 +190,7 @@ def provider_color(provider: str) -> tuple[int, int, int]:
         "ollama": TFT_CYAN,
         "claude": TFT_RED,
         "antigravity": TFT_CYAN,
-        "grok": TFT_CYAN,
+        "grok": TFT_BLACK,
     }.get(provider, TFT_BLACK)
 
 
@@ -418,16 +418,17 @@ def draw_stacked_chart(epaper: EPaperSim, data: DashboardData, rect: ChartRect, 
         x = rect.x + gap + visible_index * (bar_width + gap)
         y_bottom = rect.y + rect.h
         segments = [
-            (data.daily[i].cursor, TFT_WHITE, True, False),
-            (data.daily[i].glm, TFT_GREEN, False, False),
-            (data.daily[i].gemini, TFT_WHITE, False, True),
-            (data.daily[i].claude, TFT_RED, False, False),
-            (data.daily[i].gpt, TFT_YELLOW, False, False),
-            (data.daily[i].deepseek, TFT_BLUE, False, False),
-            (data.daily[i].grok, TFT_CYAN, False, False),
-            (data.daily[i].other, TFT_BLACK, False, False),
+            # Gemini: original white + diagonal stripes. Grok: white + dots.
+            (data.daily[i].cursor, TFT_WHITE, True, False, False),
+            (data.daily[i].glm, TFT_GREEN, False, False, False),
+            (data.daily[i].gemini, TFT_WHITE, False, True, False),
+            (data.daily[i].claude, TFT_RED, False, False, False),
+            (data.daily[i].gpt, TFT_YELLOW, False, False, False),
+            (data.daily[i].deepseek, TFT_BLUE, False, False, False),
+            (data.daily[i].grok, TFT_WHITE, False, False, True),
+            (data.daily[i].other, TFT_BLACK, False, False, False),
         ]
-        for value, color, border_only, dotted in segments:
+        for value, color, border_only, striped, dotted in segments:
             yi = value / 1e8
             height = scaled_height(yi, max_value, rect.h - 2)
             if height <= 0:
@@ -435,6 +436,8 @@ def draw_stacked_chart(epaper: EPaperSim, data: DashboardData, rect: ChartRect, 
             y_bottom -= height
             if not border_only:
                 epaper.fill_rect(x, y_bottom, bar_width, height, color)
+                if striped:
+                    draw_diagonal_stripes(epaper, x, y_bottom, bar_width, height)
                 if dotted:
                     draw_dot_pattern(epaper, x, y_bottom, bar_width, height)
             epaper.draw_rect(x, y_bottom, bar_width, height, TFT_BLACK)
@@ -509,10 +512,10 @@ def render_dashboard(data: DashboardData, battery: BatteryStatus, mode: str = SE
     draw_legend_item(epaper, 570, 12, TFT_WHITE, "Cursor", border_only=True)
     draw_legend_item(epaper, 640, 12, TFT_GREEN, "GLM")
     draw_legend_item(epaper, 715, 12, TFT_RED, "Claude")
-    draw_legend_item_dotted(epaper, 570, 30, TFT_WHITE, "Gemini")
+    draw_legend_item_striped(epaper, 570, 30, TFT_WHITE, "Gemini")
     draw_legend_item(epaper, 640, 30, TFT_YELLOW, "GPT")
     draw_legend_item(epaper, 715, 30, TFT_BLUE, "DeepSeek")
-    draw_legend_item(epaper, 570, 48, TFT_CYAN, "Grok")
+    draw_legend_item_dotted(epaper, 570, 48, TFT_WHITE, "Grok")
     draw_legend_item(epaper, 640, 48, TFT_BLACK, "Other")
 
     epaper.draw_string(610, 456, f"Battery: {battery.percentage}% ({battery.voltage:.2f}V)")
