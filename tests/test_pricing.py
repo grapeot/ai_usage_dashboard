@@ -59,6 +59,20 @@ class TestGetPricing:
         assert get_pricing("claude-opus-4.6") == {"input": 5.0, "cache_read": 0.5, "cache_write": 6.25, "cache_write_1h": 10.0, "output": 25.0}
         assert get_pricing("claude-sonnet-4.6") == {"input": 3.0, "cache_read": 0.3, "cache_write": 3.75, "cache_write_1h": 6.0, "output": 15.0}
 
+    def test_claude_opus_5(self):
+        # Opus 5 same base price as Opus 4.8/4.6; standard Anthropic cache rates.
+        assert get_pricing("claude-opus-5") == {"input": 5.0, "cache_read": 0.5, "cache_write": 6.25, "cache_write_1h": 10.0, "output": 25.0}
+        assert get_pricing("claude-opus-5-thinking-high") == get_pricing("claude-opus-5")
+        # Generic opus fallback still resolves to 4.6 when no version digit present.
+        assert get_pricing("claude-opus-unknown") == get_pricing("claude-opus-4.6")
+
+    def test_cursor_composer(self):
+        # Standard $0.50/$2.50; Fast $3.00/$15.00 (Cursor official blog).
+        assert get_pricing("cursor-composer-2.5") == {"input": 0.5, "output": 2.5}
+        assert get_pricing("cursor-composer-2.5-fast") == {"input": 3.0, "output": 15.0}
+        assert get_pricing("composer-2.5-fast") == get_pricing("cursor-composer-2.5-fast")
+        assert get_pricing("composer-2.5") == get_pricing("cursor-composer-2.5")
+
     def test_claude_fast_variant(self):
         assert get_pricing("claude-opus-4-6-fast") == {"input": 30.0, "cache_read": 3.0, "cache_write": 37.5, "cache_write_1h": 60.0, "output": 150.0}
 
