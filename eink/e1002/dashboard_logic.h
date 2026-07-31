@@ -143,7 +143,8 @@ inline uint16_t providerColor(const String& provider) {
     return TFT_CYAN;
   }
   if (provider == "grok") {
-    return TFT_CYAN;
+    // Solid cyan reads greenish on E1002; quota bar uses black fill.
+    return TFT_BLACK;
   }
   if (provider == "claude") {
     return TFT_RED;
