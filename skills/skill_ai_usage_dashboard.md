@@ -56,7 +56,7 @@ scripts/update-local-artifacts
 - AI Hours
 - Est. $, unless `--no-cost` is used
 
-Optional Grok weekly usage pool: set `GROK_COOKIE` in `.env` (browser cookie from grok.com while logged in). The dashboard calls `POST /grok_api_v2.GrokBuildBilling/GetGrokCreditsConfig` and adds a `provider=grok` weekly quota snapshot. Never commit real cookies.
+Optional Grok weekly usage pool: set `GROK_COOKIE` in `.env` (browser cookie from grok.com while logged in). The dashboard calls `POST /grok_api_v2.GrokBuildBilling/GetGrokCreditsConfig` and adds a `provider=grok` weekly quota snapshot. Proto3 omits default float `0.0`, so a 0% week has no `credit_usage_percent` field; the parser treats that as 0% so the bar still renders. Never commit real cookies.
 
 It may write local artifacts:
 
