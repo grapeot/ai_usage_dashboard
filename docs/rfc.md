@@ -682,8 +682,18 @@ UTC ISO string from `data-time`; `next_reset_time_ms` is the epoch-ms form.
 
 ### 14.3 Provider Order
 
-`quotas` is assembled in display order: z.ai GLM -> Ollama -> Codex. This
-matches the e-ink firmware's rendering top-to-bottom in the quota panel.
+`quotas` is assembled in display order: z.ai GLM -> Ollama -> Codex -> Claude ->
+Antigravity -> Grok. This matches the e-ink firmware's rendering top-to-bottom
+in the quota panel.
+
+### 14.4 Grok Weekly Pool (grpc-web)
+
+SuperGrok / X Premium weekly usage is fetched with `GROK_COOKIE` via
+`POST https://grok.com/grok_api_v2.GrokBuildBilling/GetGrokCreditsConfig`
+(grpc-web). `parse_grok_credits_response()` reads `credit_usage_percent` and
+the weekly period end. Proto3 omits default float `0.0`, so a 0% week has no
+percent field; missing is treated as `0.0` so the bar still appears. Token
+category `grok` (OpenCode xAI usage) is independent of this cookie quota.
 
 ## 15. Pydantic Response Models For The Local API
 

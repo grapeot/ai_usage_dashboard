@@ -64,6 +64,36 @@ def test_parse_grok_credits_response_weekly_pool():
     assert parsed['product_usage'][0]['usage_percent'] == 12.5
 
 
+def test_parse_grok_credits_response_zero_usage_omits_percent_fields():
+    # Live 0% responses omit proto3 default floats (field 1 and product_usage).
+    period = (
+        _key(1, 0)
+        + _varint(2)  # WEEKLY
+        + _len_field(2, _timestamp(1_785_829_649))
+        + _len_field(3, _timestamp(1_786_434_449))
+    )
+    config = (
+        _len_field(2, b'')
+        + _len_field(3, b'')
+        + _len_field(4, _timestamp(1_785_829_649))
+        + _len_field(5, _timestamp(1_786_434_449))
+        + _len_field(8, period)
+        + _key(11, 0)
+        + _varint(1)
+        + _len_field(12, b'')
+        + _key(13, 0)
+        + _varint(1)
+    )
+    body = _envelope(_len_field(1, config))
+
+    parsed = parse_grok_credits_response(body)
+    assert parsed['credit_usage_percent'] == 0.0
+    assert parsed['used_percentage'] == 0
+    assert parsed['period_label'] == 'Weekly'
+    assert parsed['next_reset_time_ms'] == 1_786_434_449 * 1000
+    assert parsed['product_usage'] == []
+
+
 def test_filter_quotas_for_eink_keeps_antigravity_gemini_only():
     quotas = [
         {'provider': 'glm', 'label': '5h', 'percentage': 1},

@@ -70,12 +70,14 @@ def parse_grok_credits_response(body: bytes) -> dict[str, Any]:
     """Parse grpc-web GetGrokCreditsConfigResponse into a plain dict.
 
     Observed GrokCreditsConfig field layout (from live responses + UI JS):
-      1: credit_usage_percent (float32)
+      1: credit_usage_percent (float32; omitted by proto3 when 0.0)
       4/5: period start/end timestamps (also mirrored under field 8)
-      7: product_usage { product enum, usage_percent float }
+      7: product_usage { product enum, usage_percent float; omitted at 0% }
       8: current_period { type enum, start, end }
       11: is_unified_billing_user
+      12/13: newer optional fields (ignored)
     UsagePeriodType: 0 unspecified, 1 monthly, 2 weekly.
+    Missing field 1 is treated as 0% used so the weekly bar still renders.
     """
     frames = _parse_connect_frames(body)
     if not frames:
@@ -181,8 +183,9 @@ def parse_grok_credits_response(body: bytes) -> dict[str, Any]:
         else:
             break
 
+    # proto3 omits default float 0.0, so a 0% period has no field 1 / field 7.
     if credit_usage_percent is None:
-        raise ValueError('credit_usage_percent missing from grok credits response')
+        credit_usage_percent = 0.0
 
     used = max(0, min(100, int(round(credit_usage_percent))))
     period_label = {
