@@ -13,6 +13,7 @@ import sys
 import argparse
 import sqlite3
 from datetime import date, datetime, timedelta
+from zoneinfo import ZoneInfo
 from collections import defaultdict
 from collections.abc import Mapping
 from pathlib import Path
@@ -40,6 +41,7 @@ FONT_EN = FontProperties(family=['Helvetica Neue', 'Helvetica', 'Arial', 'DejaVu
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 OPENCODE_STORAGE = Path.home() / '.local' / 'share' / 'opencode' / 'storage' / 'message'
 OPENCODE_DB = Path.home() / '.local' / 'share' / 'opencode' / 'opencode.db'
+OPENCODE_BATCH_DB = Path(os.environ['OPENCODE_BATCH_DB']) if os.environ.get('OPENCODE_BATCH_DB') else None
 CLAUDE_PROJECT_DIRS = [
     Path.home() / '.claude' / 'projects',
     Path.home() / '.config' / 'claude' / 'projects',
@@ -216,6 +218,28 @@ def configure_opencode_skill_path():
     if path and path not in sys.path:
         sys.path.insert(0, path)
 
+
+def _opencode_extra_dbs():
+    """Extra DBs to read besides the main DB via iter_assistant_messages.
+
+    Includes any user-configured extra DB (e.g. a separate OpenCode server's
+    live DB) via OPENCODE_BATCH_DB, plus the default archive DBs from
+    opencode_skill when available. All entries are existence-checked so
+    non-configured or missing DBs are silently skipped.
+    """
+    dbs: list[Path] = []
+    if OPENCODE_BATCH_DB is not None and OPENCODE_BATCH_DB.exists():
+        dbs.append(OPENCODE_BATCH_DB)
+    try:
+        configure_opencode_skill_path()
+        ocs_query = importlib.import_module('opencode_skill.query')
+        for p in getattr(ocs_query, 'DEFAULT_ARCHIVE_DBS', ()):
+            if p.exists() and p not in dbs:
+                dbs.append(p)
+    except ImportError:
+        pass
+    return dbs
+
 def get_date_range(days=30):
     today = datetime.now()
     start = today - timedelta(days=days - 1)
@@ -314,7 +338,7 @@ def build_eink_dashboard_payload(
 
     meta: dict[str, object] = {
         'version': 1,
-        'generated_at': datetime.now().isoformat(timespec='seconds'),
+        'generated_at': datetime.now(ZoneInfo('America/Los_Angeles')).replace(tzinfo=None).isoformat(timespec='seconds'),
         'start_date': start_date,
         'end_date': end_date,
         'days': len(all_dates),
@@ -1306,7 +1330,7 @@ def load_opencode(exclude_glm: bool = True, start_ts: int | None = None, end_ts:
         'grok': defaultdict(int),
         'opencode_other': defaultdict(int),
     }
-    for m in ocs_query.iter_assistant_messages(since_ms=start_ts, until_ms=end_ts):
+    for m in ocs_query.iter_assistant_messages(since_ms=start_ts, until_ms=end_ts, archive_dbs=_opencode_extra_dbs()):
         bucket = classify_opencode_bucket(m.provider or '', m.model or '', exclude_glm=exclude_glm)
         if bucket is None:
             continue
@@ -1331,7 +1355,7 @@ def load_opencode_detailed(exclude_glm: bool = True, start_ts: int | None = None
         ocs_query = None
 
     if ocs_query is not None:
-        for m in ocs_query.iter_assistant_messages(since_ms=start_ts, until_ms=end_ts):
+        for m in ocs_query.iter_assistant_messages(since_ms=start_ts, until_ms=end_ts, archive_dbs=_opencode_extra_dbs()):
             model_id = m.model or 'unknown'
             if classify_opencode_bucket(m.provider or '', model_id, exclude_glm=exclude_glm) is None:
                 continue

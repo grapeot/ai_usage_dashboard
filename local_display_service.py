@@ -1,4 +1,5 @@
 from datetime import datetime
+from zoneinfo import ZoneInfo
 import json
 from pathlib import Path
 import threading
@@ -63,7 +64,7 @@ def health() -> dict[str, Any]:
     return {
         "status": "ok",
         "service": "ai_usage_dashboard",
-        "generated_at": datetime.now().isoformat(timespec="seconds"),
+        "generated_at": datetime.now(ZoneInfo("America/Los_Angeles")).replace(tzinfo=None).isoformat(timespec="seconds"),
     }
 
 
