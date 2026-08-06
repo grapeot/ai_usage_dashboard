@@ -606,7 +606,7 @@ def test_load_opencode_honors_env_opencode_skill_path(monkeypatch, tmp_path):
     (package_dir / '__init__.py').write_text('')
     (package_dir / 'query.py').write_text(
         "from types import SimpleNamespace\n"
-        "def iter_assistant_messages(since_ms=None, until_ms=None):\n"
+        "def iter_assistant_messages(since_ms=None, until_ms=None, **kw):\n"
         f"    m = SimpleNamespace(id='m1', session_id='ses', time_created={in_range_ts}, provider='openai', model='gpt-5.4', tokens_input=1, tokens_output=2, tokens_reasoning=3, tokens_cache_read=4, tokens_cache_write=5, source_db='main')\n"
         "    yield m\n"
     )
