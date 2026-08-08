@@ -2169,6 +2169,211 @@ def build_latest_dashboard_payload(days: int = 30, *, no_cost: bool = False, ski
     glm_combined = merge_daily_tokens(glm, glm_opencode)
     return generate_dashboard(cursor, glm_combined, gemini, dict(claude_combined), gpt_combined, opencode_deepseek, opencode_grok, opencode_other, start_date, end_date, daily_costs, daily_active_seconds=daily_active_seconds, skip_desktop_chart=skip_desktop_chart, glm_quota=glm_quota, quotas=quotas)
 
+def _load_cursor_detailed(path=None) -> dict[date, dict[str, dict[str, int]]]:
+    """Load per-model per-day token breakdown from Cursor CSV export."""
+    if path is None:
+        path = os.path.join(SCRIPT_DIR, 'cursor.csv')
+    if not os.path.exists(path):
+        return {}
+    daily_models: defaultdict[date, defaultdict[str, dict[str, int]]] = defaultdict(
+        lambda: defaultdict(lambda: {'input': 0, 'output': 0, 'cache_read': 0, 'cache_write': 0, 'total': 0})
+    )
+    with open(path) as f:
+        for row in csv.DictReader(f):
+            try:
+                dt = datetime.fromisoformat(row['Date'].replace('Z', '+00:00')).date()
+            except (KeyError, ValueError):
+                continue
+            model = row.get('Model', 'unknown')
+            entry = daily_models[dt][model]
+            entry['input'] += int(float(row.get('Input Tokens', 0) or 0))
+            entry['output'] += int(float(row.get('Output Tokens', 0) or 0))
+            entry['cache_read'] += int(float(row.get('Cache Read Tokens', 0) or 0))
+            entry['cache_write'] += int(float(row.get('Cache Write Tokens', 0) or 0))
+            entry['total'] += int(float(row.get('Total Tokens', 0) or 0))
+    return {d: dict(m) for d, m in daily_models.items()}
+
+
+def build_model_breakdown(days: int = 30, *, include_daily: bool = True) -> dict[str, object]:
+    """Build per-model token usage breakdown across all data sources.
+
+    Returns a dict suitable for ``ModelBreakdownResponse`` serialization.
+    Sources that only provide total tokens (GLM API, Codex) are included
+    with per-category fields set to None.
+    """
+    start_date_str, end_date_str, _, _ = get_date_range(days)
+    start_d = datetime.strptime(start_date_str, '%Y-%m-%d').date()
+    end_d = datetime.strptime(end_date_str, '%Y-%m-%d').date()
+    start_ts = date_to_epoch_ms(start_d)
+    next_day_ts = date_to_epoch_ms(end_d + timedelta(days=1))
+
+    all_dates = list_dates_in_range(start_date_str, end_date_str)
+
+    # Collect: {source: {model: {date: {input, output, cache_read, cache_write, total}}}}
+    source_data: dict[str, dict[date, dict[str, dict[str, int]]]] = {}
+
+    # OpenCode (per-model detailed)
+    oc_detail = load_opencode_detailed(exclude_glm=True, start_ts=start_ts, end_ts=next_day_ts)
+    source_data['opencode'] = oc_detail
+
+    # Claude Code (per-model detailed)
+    cc_detail = load_claude_code_detailed(start_date=start_d, end_date=end_d)
+    source_data['claude_code'] = cc_detail
+
+    # Antigravity (per-model detailed)
+    ag_detail = load_antigravity_detailed()
+    source_data['antigravity'] = ag_detail
+
+    # Cursor (per-model detailed from CSV)
+    cursor_detail = _load_cursor_detailed()
+    source_data['cursor'] = cursor_detail
+
+    # GLM (total only, no per-category breakdown from API)
+    glm_daily = load_glm()
+    glm_models: dict[date, dict[str, dict[str, int]]] = {}
+    for d, total in glm_daily.items():
+        if start_d <= d <= end_d:
+            glm_models[d] = {'glm-coding-plan': {'total': total}}
+    source_data['glm'] = glm_models
+
+    # Codex (total only from usage.json)
+    codex_daily = load_codex()
+    codex_models: dict[date, dict[str, dict[str, int]]] = {}
+    for d, total in codex_daily.items():
+        if start_d <= d <= end_d:
+            codex_models[d] = {'codex-combined': {'total': total}}
+    source_data['codex'] = codex_models
+
+    # Aggregate per (source, model)
+    model_entries: list[dict] = []
+    grand_input = 0
+    grand_output = 0
+    grand_cache_read = 0
+    grand_cache_write = 0
+    grand_total = 0
+
+    for source_name, daily_models in source_data.items():
+        # {model: {date: tokens}}
+        per_model: dict[str, dict[date, dict[str, int]]] = defaultdict(dict)
+        for d, models in daily_models.items():
+            if not (start_d <= d <= end_d):
+                continue
+            for model_id, tokens in models.items():
+                per_model[model_id][d] = tokens
+
+        for model_id, date_tokens in per_model.items():
+            m_input = 0
+            m_output = 0
+            m_cache_read = 0
+            m_cache_write = 0
+            m_total = 0
+            has_detail = False
+
+            for d in all_dates:
+                tokens = date_tokens.get(d)
+                if tokens is None:
+                    if include_daily:
+                        continue
+                    else:
+                        continue
+                t_input = tokens.get('input', 0) if tokens else 0
+                t_output = tokens.get('output', 0) if tokens else 0
+                t_cr = tokens.get('cache_read', 0) if tokens else 0
+                t_cw = tokens.get('cache_write', 0) if tokens else 0
+                t_cw_1h = tokens.get('cache_write_1h', 0) if tokens else 0
+                t_cw_total = t_cw + t_cw_1h
+                t_total = tokens.get('total')
+                if t_total is None or t_total == 0:
+                    t_total = t_input + t_output + t_cr + t_cw_total
+
+                if t_input or t_output or t_cr or t_cw_total:
+                    has_detail = True
+
+                m_input += t_input or 0
+                m_output += t_output or 0
+                m_cache_read += t_cr or 0
+                m_cache_write += t_cw_total or 0
+                m_total += t_total or 0
+
+            if m_total == 0:
+                continue
+
+            entry: dict = {
+                'source': source_name,
+                'model': model_id,
+                'totals': {
+                    'input': m_input if has_detail else None,
+                    'output': m_output if has_detail else None,
+                    'cache_read': m_cache_read if has_detail else None,
+                    'cache_write': m_cache_write if has_detail else None,
+                    'total': m_total,
+                },
+            }
+
+            if include_daily:
+                daily_list = []
+                for d in all_dates:
+                    tokens = date_tokens.get(d)
+                    if tokens is None:
+                        continue
+                    t_input = tokens.get('input', 0) or 0
+                    t_output = tokens.get('output', 0) or 0
+                    t_cr = tokens.get('cache_read', 0) or 0
+                    t_cw = tokens.get('cache_write', 0) or 0
+                    t_cw_1h = tokens.get('cache_write_1h', 0) or 0
+                    t_cw_total = t_cw + t_cw_1h
+                    t_total = tokens.get('total')
+                    if t_total is None or t_total == 0:
+                        t_total = t_input + t_output + t_cr + t_cw_total
+                    if t_total == 0:
+                        continue
+                    daily_list.append({
+                        'date': d.isoformat(),
+                        'input': t_input if has_detail else None,
+                        'output': t_output if has_detail else None,
+                        'cache_read': t_cr if has_detail else None,
+                        'cache_write': t_cw_total if has_detail else None,
+                        'total': t_total,
+                    })
+                entry['daily'] = daily_list
+            else:
+                entry['daily'] = []
+
+            model_entries.append(entry)
+
+            if has_detail:
+                grand_input += m_input
+                grand_output += m_output
+                grand_cache_read += m_cache_read
+                grand_cache_write += m_cache_write
+            grand_total += m_total
+
+    # Sort by total descending
+    model_entries.sort(key=lambda e: e['totals']['total'], reverse=True)
+
+    input_output_ratio = round(grand_input / grand_output, 2) if grand_output > 0 else None
+    cache_hit_rate = round(grand_cache_read / (grand_input + grand_cache_read), 4) if (grand_input + grand_cache_read) > 0 else None
+
+    return {
+        'meta': {
+            'generated_at': datetime.now(ZoneInfo('America/Los_Angeles')).replace(tzinfo=None).isoformat(timespec='seconds'),
+            'start_date': start_date_str,
+            'end_date': end_date_str,
+            'days': days,
+        },
+        'totals': {
+            'input': grand_input,
+            'output': grand_output,
+            'cache_read': grand_cache_read,
+            'cache_write': grand_cache_write,
+            'total': grand_total,
+            'input_output_ratio': input_output_ratio,
+            'cache_hit_rate': cache_hit_rate,
+        },
+        'models': model_entries,
+    }
+
+
 def main():
     args = parse_args()
     if args.since:

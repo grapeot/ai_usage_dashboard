@@ -7,12 +7,13 @@ from typing import Any
 
 from fastapi import FastAPI
 
-from auto_usage import build_latest_dashboard_payload, ingest_antigravity_entries
+from auto_usage import build_latest_dashboard_payload, build_model_breakdown, ingest_antigravity_entries
 from dashboard_models import (
     AntigravityIngestRequest,
     AntigravityIngestResponse,
     DashboardPayload,
     HealthResponse,
+    ModelBreakdownResponse,
     QuotasResponse,
     UpdateRequest,
 )
@@ -110,6 +111,18 @@ def quotas() -> dict[str, Any]:
         "generated_at": (payload.get("meta") or {}).get("generated_at"),
         "quotas": quota_items,
     }
+
+
+@app.get(
+    "/api/v1/model-breakdown",
+    response_model=ModelBreakdownResponse,
+    summary="Return per-model token usage breakdown",
+    description="Returns per-model token usage (input, output, cache_read, cache_write, total) across all data sources (OpenCode, Claude Code, Antigravity, Cursor, GLM, Codex). Sources that only provide total tokens have per-category fields set to null. Pass ?daily=false to omit per-day entries and return totals only. Note: Cursor, GLM, and Codex data come from the most recent export (typically 30 days); requesting days>30 may return incomplete data for those sources.",
+)
+def model_breakdown(days: int = 30, daily: bool = True) -> dict[str, Any]:
+    days = max(1, min(days, 90))
+    with _refresh_lock:
+        return build_model_breakdown(days=days, include_daily=daily)
 
 
 @app.post(

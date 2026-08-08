@@ -347,3 +347,103 @@ def test_post_antigravity_ingest_accepts_empty_entries(monkeypatch, tmp_path):
     assert body["new"] == 0
     assert body["duplicate"] == 0
     assert body["total_cache"] == 0
+
+
+def test_model_breakdown_returns_per_model_shape(monkeypatch):
+    """The endpoint returns meta, totals, and a models list sorted by total desc."""
+    fake_breakdown = {
+        "meta": {
+            "generated_at": "2026-08-07T22:00:00",
+            "start_date": "2026-07-09",
+            "end_date": "2026-08-07",
+            "days": 30,
+        },
+        "totals": {
+            "input": 100000,
+            "output": 50000,
+            "cache_read": 800000,
+            "cache_write": 10000,
+            "total": 960000,
+            "input_output_ratio": 2.0,
+            "cache_hit_rate": 0.8889,
+        },
+        "models": [
+            {
+                "source": "opencode",
+                "model": "gpt-5.6-sol",
+                "totals": {
+                    "input": 100000,
+                    "output": 50000,
+                    "cache_read": 800000,
+                    "cache_write": 10000,
+                    "total": 960000,
+                },
+                "daily": [
+                    {"date": "2026-08-07", "input": 1000, "output": 500,
+                     "cache_read": 8000, "cache_write": 100, "total": 9600},
+                ],
+            },
+        ],
+    }
+    monkeypatch.setattr(local_display_service, "build_model_breakdown", lambda days=30, include_daily=True: fake_breakdown)
+
+    response = TestClient(local_display_service.app).get("/api/v1/model-breakdown?days=30")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["meta"]["days"] == 30
+    assert body["totals"]["total"] == 960000
+    assert body["totals"]["input_output_ratio"] == 2.0
+    assert len(body["models"]) == 1
+    assert body["models"][0]["model"] == "gpt-5.6-sol"
+    assert body["models"][0]["totals"]["input"] == 100000
+    assert len(body["models"][0]["daily"]) == 1
+
+
+def test_model_breakdown_daily_false_omits_daily_entries(monkeypatch):
+    """When ?daily=false is passed, the daily array is empty."""
+    fake_breakdown = {
+        "meta": {"generated_at": "2026-08-07T22:00:00", "start_date": "2026-07-09", "end_date": "2026-08-07", "days": 30},
+        "totals": {"input": 100, "output": 50, "cache_read": 0, "cache_write": 0, "total": 150, "input_output_ratio": 2.0, "cache_hit_rate": None},
+        "models": [
+            {"source": "glm", "model": "glm-coding-plan", "totals": {"input": None, "output": None, "cache_read": None, "cache_write": None, "total": 150}, "daily": []},
+        ],
+    }
+
+    captured = {}
+
+    def mock_build(days=30, include_daily=True):
+        captured["include_daily"] = include_daily
+        return fake_breakdown
+
+    monkeypatch.setattr(local_display_service, "build_model_breakdown", mock_build)
+
+    response = TestClient(local_display_service.app).get("/api/v1/model-breakdown?daily=false")
+
+    assert response.status_code == 200
+    assert captured["include_daily"] is False
+    body = response.json()
+    assert body["models"][0]["daily"] == []
+    assert body["models"][0]["totals"]["input"] is None
+
+
+def test_model_breakdown_null_fields_for_total_only_sources(monkeypatch):
+    """Sources without per-category breakdown have null input/output/cache fields."""
+    fake_breakdown = {
+        "meta": {"generated_at": "2026-08-07T22:00:00", "start_date": "2026-07-09", "end_date": "2026-08-07", "days": 30},
+        "totals": {"input": 0, "output": 0, "cache_read": 0, "cache_write": 0, "total": 500, "input_output_ratio": None, "cache_hit_rate": None},
+        "models": [
+            {"source": "glm", "model": "glm-coding-plan",
+             "totals": {"input": None, "output": None, "cache_read": None, "cache_write": None, "total": 500},
+             "daily": []},
+        ],
+    }
+    monkeypatch.setattr(local_display_service, "build_model_breakdown", lambda days=30, include_daily=True: fake_breakdown)
+
+    response = TestClient(local_display_service.app).get("/api/v1/model-breakdown")
+
+    assert response.status_code == 200
+    model = response.json()["models"][0]
+    assert model["totals"]["input"] is None
+    assert model["totals"]["output"] is None
+    assert model["totals"]["total"] == 500

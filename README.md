@@ -65,12 +65,22 @@ Default endpoints:
 - `http://127.0.0.1:7995/health`
 - `http://127.0.0.1:7995/token_usage.json`
 - `http://127.0.0.1:7995/api/v1/quotas`
+- `http://127.0.0.1:7995/api/v1/model-breakdown`
 - `http://127.0.0.1:7995/api/v1/display/update`
 
 `GET /api/v1/quotas` is the compact automation endpoint. It returns each
 provider window's used and remaining percentages plus reset timestamps, without
 forcing a provider refresh. Call `POST /api/v1/display/update` first when fresh
 provider data is required.
+
+`GET /api/v1/model-breakdown` returns per-model token usage (input, output,
+cache_read, cache_write, total) across all data sources, sorted by total tokens
+descending. Sources that only provide total tokens (GLM API, Codex) have
+per-category fields set to `null`. Query params:
+
+- `days` (default 30): number of days to cover.
+- `daily` (default true): set to `false` to omit per-day entries and return
+  totals only.
 
 Full refreshes are serialized inside the API process because collection updates
 shared cache files. If multiple clients call `POST /api/v1/display/update` at the
