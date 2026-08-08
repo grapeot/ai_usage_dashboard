@@ -140,6 +140,65 @@ class UpdateRequest(BaseModel):
     device_id: str = Field(description='Identifier of the device requesting the refresh.')
 
 
+class ModelTokenTotals(BaseModel):
+    """Token totals for one model across the date window."""
+
+    input: Optional[int] = Field(default=None, description='Non-cached input tokens. None when the source does not provide per-category breakdown.')
+    output: Optional[int] = Field(default=None, description='Output tokens (including reasoning/thinking tokens). None when the source does not provide per-category breakdown.')
+    cache_read: Optional[int] = Field(default=None, description='Cache-read input tokens. None when the source does not provide per-category breakdown.')
+    cache_write: Optional[int] = Field(default=None, description='Cache-write input tokens. None when the source does not provide per-category breakdown.')
+    total: int = Field(default=0, description='Total tokens for this model (input + output + cache_read + cache_write). Always present even when per-category breakdown is not.')
+
+
+class ModelDailyEntry(BaseModel):
+    """One day of token usage for one model."""
+
+    date: str = Field(description='Calendar date, YYYY-MM-DD.')
+    input: Optional[int] = Field(default=None, description='Non-cached input tokens for this day. None when the source does not provide per-category breakdown.')
+    output: Optional[int] = Field(default=None, description='Output tokens for this day. None when the source does not provide per-category breakdown.')
+    cache_read: Optional[int] = Field(default=None, description='Cache-read input tokens for this day. None when the source does not provide per-category breakdown.')
+    cache_write: Optional[int] = Field(default=None, description='Cache-write input tokens for this day. None when the source does not provide per-category breakdown.')
+    total: int = Field(default=0, description='Total tokens for this day.')
+
+
+class ModelBreakdownEntry(BaseModel):
+    """Per-model token usage from one data source."""
+
+    source: str = Field(description='Data source label: opencode, claude_code, antigravity, cursor, glm, or codex.')
+    model: str = Field(description='Model identifier as reported by the source, e.g. gpt-5.6-sol, claude-opus-5, composer-2.5-fast.')
+    totals: ModelTokenTotals = Field(default_factory=ModelTokenTotals, description='Token totals for this model across the full date window.')
+    daily: list[ModelDailyEntry] = Field(default_factory=list, description='Per-day token entries for this model, ordered by date. Empty when ?daily=false is passed.')
+
+
+class ModelBreakdownTotals(BaseModel):
+    """Aggregate token totals across all models and sources."""
+
+    input: int = Field(default=0, description='Total non-cached input tokens across all models that provide per-category breakdown.')
+    output: int = Field(default=0, description='Total output tokens across all models that provide per-category breakdown.')
+    cache_read: int = Field(default=0, description='Total cache-read tokens across all models that provide per-category breakdown.')
+    cache_write: int = Field(default=0, description='Total cache-write tokens across all models that provide per-category breakdown.')
+    total: int = Field(default=0, description='Total tokens across all models (including sources without per-category breakdown).')
+    input_output_ratio: Optional[float] = Field(default=None, description='Input divided by output (non-cached input / output). None when output is zero.')
+    cache_hit_rate: Optional[float] = Field(default=None, description='Cache-read tokens divided by (input + cache_read). None when the denominator is zero.')
+
+
+class ModelBreakdownMeta(BaseModel):
+    """Metadata for the model-breakdown response."""
+
+    generated_at: Optional[str] = Field(default=None, description='ISO timestamp (local, seconds precision) marking when the breakdown was generated.')
+    start_date: Optional[str] = Field(default=None, description='Inclusive start date, YYYY-MM-DD.')
+    end_date: Optional[str] = Field(default=None, description='Inclusive end date, YYYY-MM-DD.')
+    days: Optional[int] = Field(default=None, description='Number of days covered, inclusive of both endpoints.')
+
+
+class ModelBreakdownResponse(BaseModel):
+    """Per-model token usage breakdown across all data sources."""
+
+    meta: ModelBreakdownMeta = Field(default_factory=ModelBreakdownMeta, description='Metadata describing the generation run.')
+    totals: ModelBreakdownTotals = Field(default_factory=ModelBreakdownTotals, description='Aggregate token totals across all models.')
+    models: list[ModelBreakdownEntry] = Field(default_factory=list, description='Per-model entries, ordered by total tokens descending.')
+
+
 class AntigravityIngestRequest(BaseModel):
     """Request body for pushing Antigravity entries from a satellite machine.
 
