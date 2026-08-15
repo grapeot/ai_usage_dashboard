@@ -68,6 +68,10 @@ MODEL_ALIASES = {
     "qwen3.5:397b": "qwen3.5-397b-a17b",
     "qwen3.5:397b-cloud": "qwen3.5-397b-a17b",
     "qwen3.5-397b": "qwen3.5-397b-a17b",
+    # DSH routes Z.ai GLM 5.3 through its own client; price at the closest
+    # published GLM tier until an official 5.3 price exists.
+    "glm-5.3": "glm-5.1",
+    "zai/glm-5.3": "glm-5.1",
 }
 
 Pricing = dict[str, float]

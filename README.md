@@ -95,6 +95,7 @@ If a LAN device needs access, configure the host through private local config or
 - Cursor: `cursor.com/api/dashboard/export-usage-events-csv`, with a private browser cookie
 - GLM/Z.ai: usage API, with a private bearer token
 - Claude Code: local Claude Code JSONL session logs
+- DeepSeek Harness (DSH): local `~/.dsh/sessions` logs (plain or Zstandard-compressed JSONL; the `zstd` binary must be on PATH for compressed logs). Z.ai GLM usage routed through DSH joins the GLM bucket because the Z.ai usage API does not see it; local models (e.g. LM Studio) are reported in the Other bucket at $0
 - OpenCode: local OpenCode SQLite database; optional archive support can use a separate `opencode_skill` installation
 
 All paths and credentials are local environment details. The public repository documents contracts only; it does not include real data.

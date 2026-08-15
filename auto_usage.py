@@ -24,6 +24,7 @@ from matplotlib.font_manager import FontProperties
 import requests
 
 import antigravity_usage as _antigravity_usage
+import dsh_usage as _dsh_usage
 import grok_usage as _grok_usage
 from pricing_config import get_pricing, calc_cost
 
@@ -1870,7 +1871,7 @@ def calc_claude_code_cost(detailed: DailyModelTokens) -> DailyCosts:
     return dict(result)
 
 
-def compute_daily_costs(start_date: str, end_date: str, start_ts: int, end_ts: int, codex: DailyTokens, glm: DailyTokens) -> DailyCosts | None:
+def compute_daily_costs(start_date: str, end_date: str, start_ts: int, end_ts: int, codex: DailyTokens, glm: DailyTokens, dsh_detailed: dict[date, dict[str, dict[str, int]]] | None = None) -> DailyCosts | None:
     start_d = datetime.strptime(start_date, '%Y-%m-%d').date()
     end_d = datetime.strptime(end_date, '%Y-%m-%d').date()
     daily_costs = defaultdict(float)
@@ -1878,6 +1879,11 @@ def compute_daily_costs(start_date: str, end_date: str, start_ts: int, end_ts: i
         if start_d <= d <= end_d:
             daily_costs[d] += v
     for d, v in calc_glm_cost(glm).items():
+        if start_d <= d <= end_d:
+            daily_costs[d] += v
+    if dsh_detailed is None:
+        dsh_detailed = _dsh_usage.load_dsh_detailed(start_date=start_d, end_date=end_d)
+    for d, v in _dsh_usage.calc_dsh_cost(dsh_detailed).items():
         if start_d <= d <= end_d:
             daily_costs[d] += v
     opencode_detailed = load_opencode_detailed(exclude_glm=True, start_ts=start_ts, end_ts=end_ts)
@@ -2123,6 +2129,18 @@ def build_latest_dashboard_payload(days: int = 30, *, no_cost: bool = False, ski
 
     claude_code = load_claude_code(start_date=start_d, end_date=end_d)
 
+    print("Loading DSH (DeepSeek Harness) data...")
+    dsh_detailed = _dsh_usage.load_dsh_detailed(start_date=start_d, end_date=end_d)
+    dsh_glm: DailyTokens = {}
+    dsh_other: DailyTokens = {}
+    for d, models in dsh_detailed.items():
+        for model_id, tok in models.items():
+            total = tok['input'] + tok['output'] + tok['cache_read'] + tok['cache_write']
+            if total <= 0:
+                continue
+            target = dsh_glm if _dsh_usage.is_dsh_glm_model(model_id) else dsh_other
+            target[d] = target.get(d, 0) + total
+
     print("Loading OpenCode data (excluding zai-coding-plan GLM, split: Anthropic / Gemini / GLM / GPT / DeepSeek / Grok / other)...")
     opencode_data = load_opencode(exclude_glm=True, start_ts=start_day_ts, end_ts=next_day_ts)
     anthropic = opencode_data['anthropic']
@@ -2160,13 +2178,17 @@ def build_latest_dashboard_payload(days: int = 30, *, no_cost: bool = False, ski
     codex_turn_intervals = load_codex_turn_intervals(start_date, end_date)
     daily_active_seconds = compute_daily_ai_active_seconds(opencode_turn_intervals, codex_turn_intervals, start_date, end_date)
 
-    daily_costs = compute_daily_costs(start_date, end_date, start_day_ts, next_day_ts, codex, glm) if not no_cost else None
+    daily_costs = compute_daily_costs(start_date, end_date, start_day_ts, next_day_ts, codex, glm, dsh_detailed=dsh_detailed) if not no_cost else None
     if daily_costs is not None and antigravity_detailed:
         for d, v in calc_antigravity_cost(antigravity_detailed).items():
             if start_d <= d <= end_d:
                 daily_costs[d] = daily_costs.get(d, 0.0) + v
     gpt_combined = merge_daily_tokens(gpt_opencode, codex)
-    glm_combined = merge_daily_tokens(glm, glm_opencode)
+    # DSH zai/glm-* joins the GLM bucket: the Z.ai monitor API does not see
+    # DSH-routed calls, so this adds usage the API bucket cannot double count.
+    glm_combined = merge_daily_tokens(glm, glm_opencode, dsh_glm)
+    for d, v in dsh_other.items():
+        opencode_other[d] = opencode_other.get(d, 0) + v
     return generate_dashboard(cursor, glm_combined, gemini, dict(claude_combined), gpt_combined, opencode_deepseek, opencode_grok, opencode_other, start_date, end_date, daily_costs, daily_active_seconds=daily_active_seconds, skip_desktop_chart=skip_desktop_chart, glm_quota=glm_quota, quotas=quotas)
 
 def _load_cursor_detailed(path=None) -> dict[date, dict[str, dict[str, int]]]:
@@ -2219,6 +2241,9 @@ def build_model_breakdown(days: int = 30, *, include_daily: bool = True) -> dict
     # Claude Code (per-model detailed)
     cc_detail = load_claude_code_detailed(start_date=start_d, end_date=end_d)
     source_data['claude_code'] = cc_detail
+
+    # DSH (per-model detailed)
+    source_data['dsh'] = _dsh_usage.load_dsh_detailed(start_date=start_d, end_date=end_d)
 
     # Antigravity (per-model detailed)
     ag_detail = load_antigravity_detailed()
