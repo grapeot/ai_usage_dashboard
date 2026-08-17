@@ -23,13 +23,17 @@ class TestGetPricing:
         assert get_pricing("xai/grok-4.5") == {"input": 2.0, "cached": 0.5, "output": 6.0}
         assert get_pricing("x-ai/grok-4.5") == {"input": 2.0, "cached": 0.5, "output": 6.0}
         assert get_pricing("grok-4.5-fast") == {"input": 4.0, "cached": 1.0, "output": 18.0}
+        assert get_pricing("grok-4.6") == {"input": 2.0, "cached": 0.5, "output": 6.0}
+        assert get_pricing("grok-4.6-fast") == {"input": 4.0, "cached": 1.0, "output": 12.0}
         assert get_pricing("grok-4-1-fast") == {"input": 0.2, "cached": 0.05, "output": 0.5}
         assert get_pricing("grok-code-fast-1") == {"input": 0.2, "cached": 0.02, "output": 1.5}
         assert get_pricing("glm-5.1") == {"input": 1.4, "cached": 0.26, "output": 4.4}
+        assert get_pricing("glm-5.2") == {"input": 1.4, "cached": 0.26, "output": 4.4}
         assert get_pricing("glm-5") == {"input": 1.0, "cached": 0.2, "output": 3.2}
         assert get_pricing("glm-5-turbo") == {"input": 1.2, "cached": 0.24, "output": 4.0}
         assert get_pricing("gemini-3-flash") == {"input": 0.5, "output": 3.0}
         assert get_pricing("gemini-3-flash-preview") == {"input": 0.5, "output": 3.0}
+        assert get_pricing("gemini-3.6-flash") == {"input": 0.75, "cached": 0.075, "output": 3.75}
         assert get_pricing("gemini-3.1-pro-preview") == {"input": 2.0, "output": 12.0}
         assert get_pricing("deepseek-v4-flash") == {"input": 0.14, "cached": 0.0028, "output": 0.28}
         assert get_pricing("deepseek-v4-pro") == {"input": 0.435, "cached": 0.003625, "output": 0.87}
@@ -80,6 +84,20 @@ class TestGetPricing:
         assert get_pricing("grok-4-1-fast-non-reasoning") == {"input": 0.2, "cached": 0.05, "output": 0.5}
         assert get_pricing("grok-4-1-fast-reasoning") == {"input": 0.2, "cached": 0.05, "output": 0.5}
         assert get_pricing("grok-4.20-experimental-beta-0304-non-reasoning") == {"input": 0.2, "cached": 0.05, "output": 0.5}
+        assert get_pricing("xai/grok-4.6") == get_pricing("grok-4.6")
+        assert get_pricing("cursor-grok-4.6-high") == get_pricing("grok-4.6")
+        assert get_pricing("grok-4.6-fast-reasoning") == get_pricing("grok-4.6-fast")
+
+    def test_glm_52_and_gemini_36(self):
+        assert get_pricing("zai/glm-5.2") == get_pricing("glm-5.2")
+        assert get_pricing("antigravity-gemini-3.6-flash") == get_pricing("gemini-3.6-flash")
+
+    def test_local_free_models(self):
+        free = {"input": 0.0, "cached": 0.0, "output": 0.0}
+        assert get_pricing("lmstudio/qwen3.8-27b-mlx") == free
+        assert get_pricing("lmstudio/qwen3.8-27b-mlx@4bit") == free
+        assert get_pricing("muse-glimmer:30b-mlx") == free
+        assert get_pricing("nemotron-3.5-lightning:30b-mlx") == free
 
     def test_new_model_aliases(self):
         assert get_pricing("qwen3.5:397b") == {"input": 0.39, "output": 2.34}
