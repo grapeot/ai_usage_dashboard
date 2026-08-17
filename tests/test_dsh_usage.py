@@ -143,5 +143,5 @@ def test_cost_pricing(tmp_path: Path) -> None:
     # zai/glm-5.3 aliases to glm-5.1 pricing: nonzero API-equivalent cost.
     assert costs[date(2026, 8, 14)] > 0
     local_only = {date(2026, 8, 14): {'lmstudio/qwen3.8-27b-mlx': {'input': 1000, 'output': 100, 'cache_read': 0, 'cache_write': 0}}}
-    # Unpriced local models contribute nothing (same as calc_opencode_cost).
-    assert calc_dsh_cost(local_only) == {}
+    # Local LM Studio / MLX models are in the table at $0.
+    assert calc_dsh_cost(local_only) == {date(2026, 8, 14): 0.0}

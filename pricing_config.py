@@ -1,7 +1,7 @@
 """
 Model pricing config: lookup official API prices by model name, independent of source.
 Reference: docs/rfc.md
-Updated: 2026-07
+Updated: 2026-08
 """
 # model name -> official price ($/M tokens)
 MODEL_PRICING = {
@@ -20,9 +20,14 @@ MODEL_PRICING = {
     "grok-4.5": {"input": 2.0, "cached": 0.5, "output": 6.0},
     # Cursor Fast variant for Grok 4.5.
     "grok-4.5-fast": {"input": 4.0, "cached": 1.0, "output": 18.0},
+    # xAI docs (Aug 12, 2026): short-context <200k = $2/$0.50/$6; fast = 2x.
+    "grok-4.6": {"input": 2.0, "cached": 0.5, "output": 6.0},
+    "grok-4.6-fast": {"input": 4.0, "cached": 1.0, "output": 12.0},
     "grok-4-1-fast": {"input": 0.2, "cached": 0.05, "output": 0.5},
     "grok-code-fast-1": {"input": 0.2, "cached": 0.02, "output": 1.5},
     "glm-5.1": {"input": 1.4, "cached": 0.26, "output": 4.4},
+    # Z.ai official pricing page: GLM-5.2 matches GLM-5.1 list rates.
+    "glm-5.2": {"input": 1.4, "cached": 0.26, "output": 4.4},
     "glm-5": {"input": 1.0, "cached": 0.2, "output": 3.2},
     "glm-5-turbo": {"input": 1.2, "cached": 0.24, "output": 4.0},
     "glm-5-code": {"input": 1.2, "cached": 0.3, "output": 5.0},
@@ -40,6 +45,8 @@ MODEL_PRICING = {
     "gemini-3-flash": {"input": 0.5, "output": 3.0},
     "gemini-3-flash-preview": {"input": 0.5, "output": 3.0},
     "antigravity-gemini-3-flash": {"input": 0.5, "output": 3.0},
+    # Google Gemini API / Vertex: intro Standard rate through 2026-12-31.
+    "gemini-3.6-flash": {"input": 0.75, "cached": 0.075, "output": 3.75},
     "gemini-3-pro": {"input": 2.0, "output": 12.0},
     "gemini-3.1-pro-preview": {"input": 2.0, "output": 12.0},
     "deepseek-v4-flash": {"input": 0.14, "cached": 0.0028, "output": 0.28},
@@ -50,6 +57,7 @@ MODEL_PRICING = {
     "kimi-k2.6": {"input": 0.95, "cached": 0.16, "output": 4.0},
     "minimax-m3": {"input": 0.3, "cached": 0.06, "output": 1.2},
     "qwen3.5-397b-a17b": {"input": 0.39, "output": 2.34},
+    "local-free": {"input": 0.0, "cached": 0.0, "output": 0.0},
 }
 
 # modelID variants -> canonical model names
@@ -64,6 +72,12 @@ MODEL_ALIASES = {
     "x-ai/grok-4.5": "grok-4.5",
     "grok-4.5-fast-reasoning": "grok-4.5-fast",
     "grok-4.5-fast-non-reasoning": "grok-4.5-fast",
+    "xai/grok-4.6": "grok-4.6",
+    "x-ai/grok-4.6": "grok-4.6",
+    "cursor-grok-4.6-high": "grok-4.6",
+    "cursor-grok-4.6": "grok-4.6",
+    "grok-4.6-fast-reasoning": "grok-4.6-fast",
+    "grok-4.6-fast-non-reasoning": "grok-4.6-fast",
     "antigravity-gemini-3-pro": "gemini-3.1-pro-preview",
     "qwen3.5:397b": "qwen3.5-397b-a17b",
     "qwen3.5:397b-cloud": "qwen3.5-397b-a17b",
@@ -72,6 +86,7 @@ MODEL_ALIASES = {
     # published GLM tier until an official 5.3 price exists.
     "glm-5.3": "glm-5.1",
     "zai/glm-5.3": "glm-5.1",
+    "zai/glm-5.2": "glm-5.2",
 }
 
 Pricing = dict[str, float]
@@ -130,12 +145,22 @@ def get_pricing(model_id: str) -> Pricing | None:
         return MODEL_PRICING["grok-build-0.1"].copy()
     if model_lower.startswith("grok-4-1-fast"):
         return MODEL_PRICING["grok-4-1-fast"].copy()
+    if "grok-4.6" in model_lower and "fast" in model_lower:
+        return MODEL_PRICING["grok-4.6-fast"].copy()
+    if "grok-4.6" in model_lower:
+        return MODEL_PRICING["grok-4.6"].copy()
     if "grok-4.5" in model_lower and "fast" in model_lower:
         return MODEL_PRICING["grok-4.5-fast"].copy()
     if model_lower.startswith("grok-4.5") or model_lower == "grok-4.5":
         return MODEL_PRICING["grok-4.5"].copy()
     if model_lower.startswith("grok-4"):
         return MODEL_PRICING["grok-4"].copy()
+    if model_lower.startswith("glm-5.2") or model_lower == "glm-5.2":
+        return MODEL_PRICING["glm-5.2"].copy()
+    if "gemini-3.6-flash" in model_lower:
+        return MODEL_PRICING["gemini-3.6-flash"].copy()
+    if model_lower.startswith("lmstudio/") or "-mlx" in model_lower:
+        return MODEL_PRICING["local-free"].copy()
     if model_lower.startswith("deepseek-v4-flash"):
         return MODEL_PRICING["deepseek-v4-flash"].copy()
     if model_lower.startswith("deepseek-v4-pro"):
