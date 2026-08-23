@@ -26,9 +26,31 @@ inline void drawDiagonalStripes(EPaper& epaper, int rx, int ry, int w, int h, in
   }
 }
 
+// Draw 1px 45-degree lines from top-left to bottom-right, spaced `spacing` px apart.
+// Vertical mirror of drawDiagonalStripes; used to distinguish Qwen from Gemini.
+inline void drawReverseDiagonalStripes(EPaper& epaper, int rx, int ry, int w, int h, int spacing = 10) {
+  for (int c = spacing; c < w + h; c += spacing) {
+    int x0 = (c >= h) ? (c - h + 1) : 0;
+    int y0 = (c < h) ? (h - 1 - c) : 0;
+    int x1 = (c < w) ? c : (w - 1);
+    int y1 = (c >= w) ? (h + w - c - 2) : (h - 1);
+    if (x0 >= w || y0 >= h) continue;
+    epaper.drawLine(rx + x0, ry + y0, rx + x1, ry + y1, TFT_BLACK);
+  }
+}
+
 inline void drawLegendItemStriped(EPaper& epaper, int x, int y, uint16_t fillColor, const String& label) {
   epaper.fillRect(x, y, 12, 12, fillColor);
   drawDiagonalStripes(epaper, x, y, 12, 12, 4);
+  epaper.drawRect(x, y, 12, 12, TFT_BLACK);
+  epaper.setTextColor(TFT_BLACK, TFT_WHITE);
+  epaper.setTextSize(1);
+  epaper.drawString(label, x + 18, y - 1);
+}
+
+inline void drawLegendItemReverseStriped(EPaper& epaper, int x, int y, uint16_t fillColor, const String& label) {
+  epaper.fillRect(x, y, 12, 12, fillColor);
+  drawReverseDiagonalStripes(epaper, x, y, 12, 12, 4);
   epaper.drawRect(x, y, 12, 12, TFT_BLACK);
   epaper.setTextColor(TFT_BLACK, TFT_WHITE);
   epaper.setTextSize(1);
@@ -92,16 +114,18 @@ inline void drawStackedChart(EPaper& epaper, const DashboardData& data, const Ch
       bool borderOnly;
       bool striped;
       bool dotted;
+      bool reverseStriped;
     } segments[] = {
-        // Gemini: original white + diagonal stripes. Grok: white + dots (not solid cyan/green).
-        {data.daily[i].cursor, TFT_WHITE, true, false, false},
-        {data.daily[i].glm, TFT_GREEN, false, false, false},
-        {data.daily[i].gemini, TFT_WHITE, false, true, false},
-        {data.daily[i].claude, TFT_RED, false, false, false},
-        {data.daily[i].gpt, TFT_YELLOW, false, false, false},
-        {data.daily[i].deepseek, TFT_BLUE, false, false, false},
-        {data.daily[i].grok, TFT_WHITE, false, false, true},
-        {data.daily[i].other, TFT_BLACK, false, false, false},
+        // Gemini: white + diagonal stripes (/). Grok: white + dots. Qwen: white + reverse stripes (\).
+        {data.daily[i].cursor, TFT_WHITE, true, false, false, false},
+        {data.daily[i].glm, TFT_GREEN, false, false, false, false},
+        {data.daily[i].gemini, TFT_WHITE, false, true, false, false},
+        {data.daily[i].claude, TFT_RED, false, false, false, false},
+        {data.daily[i].gpt, TFT_YELLOW, false, false, false, false},
+        {data.daily[i].deepseek, TFT_BLUE, false, false, false, false},
+        {data.daily[i].grok, TFT_WHITE, false, false, true, false},
+        {data.daily[i].qwen, TFT_WHITE, false, false, false, true},
+        {data.daily[i].other, TFT_BLACK, false, false, false, false},
     };
 
     for (const Segment& segment : segments) {
@@ -118,6 +142,9 @@ inline void drawStackedChart(EPaper& epaper, const DashboardData& data, const Ch
         }
         if (segment.dotted) {
           drawDotPattern(epaper, x, yBottom, barWidth, height);
+        }
+        if (segment.reverseStriped) {
+          drawReverseDiagonalStripes(epaper, x, yBottom, barWidth, height);
         }
       }
       epaper.drawRect(x, yBottom, barWidth, height, TFT_BLACK);
@@ -251,7 +278,8 @@ inline void renderDashboard(EPaper& epaper,
   drawLegendItem(epaper, 640, 30, TFT_YELLOW, "GPT");
   drawLegendItem(epaper, 715, 30, TFT_BLUE, "DeepSeek");
   drawLegendItemDotted(epaper, 570, 48, TFT_WHITE, "Grok");
-  drawLegendItem(epaper, 640, 48, TFT_BLACK, "Other");
+  drawLegendItemReverseStriped(epaper, 640, 48, TFT_WHITE, "Qwen");
+  drawLegendItem(epaper, 715, 48, TFT_BLACK, "Other");
 
   char batteryBuffer[48];
   snprintf(batteryBuffer, sizeof(batteryBuffer), "Battery: %d%% (%.2fV)", battery.percentage, battery.voltage);

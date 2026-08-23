@@ -36,12 +36,13 @@ def _sample_payload():
         'meta': {'generated_at': '2026-06-28T11:38:22', 'start_date': '2026-06-22', 'end_date': '2026-06-28'},
         'summary': {'total_tokens': 2000000000, 'total_cost_usd': 50.0, 'total_ai_hours': 57.2, 'categories': {
             'cursor': 49_000_000, 'glm': 1_200_000_000, 'gemini': 35_000_000,
-            'claude': 0, 'gpt_opencode': 649_000_000, 'deepseek': 67_000_000, 'other': 0}},
+            'claude': 0, 'gpt_opencode': 649_000_000, 'deepseek': 67_000_000,
+            'grok': 0, 'qwen': 5_000_000, 'other': 0}},
         'daily': [
             {'date': f'2026-06-{22 + i:02d}', 'categories': {
                 'cursor': 1_000_000, 'glm': 100_000_000 + i * 10_000_000,
                 'gemini': 1_000_000, 'claude': 0, 'gpt_opencode': 80_000_000,
-                'deepseek': 5_000_000, 'other': 0},
+                'deepseek': 5_000_000, 'grok': 0, 'qwen': 500_000, 'other': 0},
              'total_tokens': 200_000_000 + i * 10_000_000,
              'ai_hours': 7.0 + i * 0.5, 'cost_usd': 5.0}
             for i in range(7)

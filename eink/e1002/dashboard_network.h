@@ -130,6 +130,7 @@ inline bool parseDashboardPayload(const String& payload, DashboardData& data, St
   data.gpt = doc["summary"]["categories"]["gpt_opencode"] | 0ULL;
   data.deepseek = doc["summary"]["categories"]["deepseek"] | 0ULL;
   data.grok = doc["summary"]["categories"]["grok"] | 0ULL;
+  data.qwen = doc["summary"]["categories"]["qwen"] | 0ULL;
   data.other = doc["summary"]["categories"]["other"] | 0ULL;
 
   data.dailyCount = 0;
@@ -148,6 +149,7 @@ inline bool parseDashboardPayload(const String& payload, DashboardData& data, St
     entry.gpt = day["categories"]["gpt_opencode"] | 0ULL;
     entry.deepseek = day["categories"]["deepseek"] | 0ULL;
     entry.grok = day["categories"]["grok"] | 0ULL;
+    entry.qwen = day["categories"]["qwen"] | 0ULL;
     entry.other = day["categories"]["other"] | 0ULL;
     entry.totalTokens = day["total_tokens"] | 0ULL;
     entry.aiHours = day["ai_hours"] | 0.0;
