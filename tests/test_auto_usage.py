@@ -111,6 +111,18 @@ def test_classify_opencode_bucket_grok_45_maps_to_grok():
     assert classify_opencode_bucket('xai', 'grok-4.5') == 'grok'
 
 
+def test_classify_opencode_bucket_qwen_provider_maps_to_qwen():
+    assert classify_opencode_bucket('qwen38', 'qwen3.8-27b') == 'qwen'
+
+
+def test_classify_opencode_bucket_qwen_model_maps_to_qwen():
+    assert classify_opencode_bucket('local', 'qwen-122b') == 'qwen'
+
+
+def test_classify_opencode_bucket_ollama_cloud_qwen_model_maps_to_qwen():
+    assert classify_opencode_bucket('ollama-cloud', 'qwen3.5:397b') == 'qwen'
+
+
 def test_classify_opencode_bucket_glm_provider_is_excluded_by_default():
     assert classify_opencode_bucket('zai-coding-plan', 'glm-5') is None
 
@@ -240,6 +252,7 @@ def test_generate_dashboard_keeps_est_cost_column_when_daily_costs_is_empty_dict
         gpt_opencode={date(2026, 3, 12): 100},
         deepseek={},
         grok={},
+        qwen={},
         other={},
         start_date='2026-03-12',
         end_date='2026-03-12',
@@ -273,6 +286,7 @@ def test_build_eink_dashboard_payload_emits_minimal_device_friendly_shape():
         gpt_opencode={date(2026, 3, 12): 100},
         deepseek={},
         grok={},
+        qwen={},
         other={},
         start_date='2026-03-12',
         end_date='2026-03-13',
@@ -298,6 +312,7 @@ def test_build_eink_dashboard_payload_emits_minimal_device_friendly_shape():
         'gpt_opencode': 100,
         'deepseek': 0,
         'grok': 0,
+        'qwen': 0,
         'other': 0,
     }
     assert len(daily) == 2
@@ -311,6 +326,7 @@ def test_build_eink_dashboard_payload_emits_minimal_device_friendly_shape():
             'gpt_opencode': 100,
             'deepseek': 0,
             'grok': 0,
+            'qwen': 0,
             'other': 0,
         },
         'total_tokens': 135,
@@ -942,6 +958,7 @@ def test_build_eink_dashboard_payload_includes_glm_quota_when_provided():
         gpt_opencode={},
         deepseek={},
         grok={},
+        qwen={},
         other={},
         start_date='2026-06-22',
         end_date='2026-06-28',
@@ -963,6 +980,7 @@ def test_build_eink_dashboard_payload_omits_glm_quota_when_empty():
         gpt_opencode={},
         deepseek={},
         grok={},
+        qwen={},
         other={},
         start_date='2026-06-22',
         end_date='2026-06-28',
@@ -983,6 +1001,7 @@ def test_generate_dashboard_prints_quota_block(capsys):
         gpt_opencode={},
         deepseek={},
         grok={},
+        qwen={},
         other={},
         start_date='2026-06-22',
         end_date='2026-06-22',
@@ -1083,7 +1102,7 @@ def test_build_eink_dashboard_payload_includes_unified_quotas_when_provided():
     quotas = normalize_codex_rate_limits(_CODEX_RATE_LIMITS)
 
     payload = build_eink_dashboard_payload(
-        cursor={}, glm={}, gemini={}, claude={}, gpt_opencode={}, deepseek={}, grok={}, other={},
+        cursor={}, glm={}, gemini={}, claude={}, gpt_opencode={}, deepseek={}, grok={}, qwen={}, other={},
         start_date='2026-06-22', end_date='2026-06-28',
         quotas=quotas,
     )
@@ -1096,7 +1115,7 @@ def test_build_eink_dashboard_payload_includes_unified_quotas_when_provided():
 
 def test_build_eink_dashboard_payload_omits_quotas_when_empty():
     payload = build_eink_dashboard_payload(
-        cursor={}, glm={}, gemini={}, claude={}, gpt_opencode={}, deepseek={}, grok={}, other={},
+        cursor={}, glm={}, gemini={}, claude={}, gpt_opencode={}, deepseek={}, grok={}, qwen={}, other={},
         start_date='2026-06-22', end_date='2026-06-28',
         quotas=[],
     )

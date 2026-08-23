@@ -49,6 +49,9 @@ class TestClassifyAntigravityModel:
     def test_deepseek(self):
         assert _classify_antigravity_model('deepseek-v4-flash') == 'deepseek'
 
+    def test_qwen(self):
+        assert _classify_antigravity_model('qwen-122b') == 'qwen'
+
     def test_unknown_defaults_to_gemini(self):
         assert _classify_antigravity_model('unknown-model') == 'opencode_other'
 
@@ -337,7 +340,7 @@ class TestLoadAntigravity:
              patch('auto_usage._save_antigravity_cache'):
             result = load_antigravity()
         assert all(v == {} for v in result.values())
-        assert set(result.keys()) == {'gemini', 'anthropic', 'gpt_opencode', 'deepseek', 'opencode_other'}
+        assert set(result.keys()) == {'gemini', 'anthropic', 'gpt_opencode', 'deepseek', 'qwen', 'opencode_other'}
 
     def test_basic_flow(self):
         conn = AntigravityConnection(pid=1, port=9999, csrf_token="x")

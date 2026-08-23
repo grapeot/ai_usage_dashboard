@@ -69,6 +69,8 @@ def classify_model(
         return 'gpt_opencode'
     if 'deepseek' in model:
         return 'deepseek'
+    if 'qwen' in model:
+        return 'qwen'
     return 'opencode_other'
 
 
@@ -625,6 +627,7 @@ def load_usage(
         'anthropic': defaultdict(int),
         'gpt_opencode': defaultdict(int),
         'deepseek': defaultdict(int),
+        'qwen': defaultdict(int),
         'opencode_other': defaultdict(int),
     }
     for entry in all_entries:

@@ -54,6 +54,7 @@ class DailyEntry:
     gpt: int = 0
     deepseek: int = 0
     grok: int = 0
+    qwen: int = 0
     other: int = 0
     total_tokens: int = 0
     ai_hours: float = 0.0
@@ -84,6 +85,7 @@ class DashboardData:
     gpt: int = 0
     deepseek: int = 0
     grok: int = 0
+    qwen: int = 0
     other: int = 0
     daily: list[DailyEntry] = field(default_factory=list)
     quotas: list[QuotaWindow] = field(default_factory=list)
@@ -375,9 +377,28 @@ def draw_diagonal_stripes(epaper: EPaperSim, rx: int, ry: int, w: int, h: int, s
         c += spacing
 
 
+def draw_reverse_diagonal_stripes(epaper: EPaperSim, rx: int, ry: int, w: int, h: int, spacing: int = 10) -> None:
+    c = spacing
+    while c < w + h:
+        x0 = (c - h + 1) if c >= h else 0
+        y0 = (h - 1 - c) if c < h else 0
+        x1 = c if c < w else (w - 1)
+        y1 = (h + w - c - 2) if c >= w else (h - 1)
+        if x0 < w and y0 < h:
+            epaper.draw_line(rx + x0, ry + y0, rx + x1, ry + y1, TFT_BLACK)
+        c += spacing
+
+
 def draw_legend_item_striped(epaper: EPaperSim, x: int, y: int, fill_color: tuple[int, int, int], label: str) -> None:
     epaper.fill_rect(x, y, 12, 12, fill_color)
     draw_diagonal_stripes(epaper, x, y, 12, 12, 4)
+    epaper.draw_rect(x, y, 12, 12, TFT_BLACK)
+    epaper.draw_string(x + 18, y - 1, label)
+
+
+def draw_legend_item_reverse_striped(epaper: EPaperSim, x: int, y: int, fill_color: tuple[int, int, int], label: str) -> None:
+    epaper.fill_rect(x, y, 12, 12, fill_color)
+    draw_reverse_diagonal_stripes(epaper, x, y, 12, 12, 4)
     epaper.draw_rect(x, y, 12, 12, TFT_BLACK)
     epaper.draw_string(x + 18, y - 1, label)
 
@@ -418,17 +439,18 @@ def draw_stacked_chart(epaper: EPaperSim, data: DashboardData, rect: ChartRect, 
         x = rect.x + gap + visible_index * (bar_width + gap)
         y_bottom = rect.y + rect.h
         segments = [
-            # Gemini: original white + diagonal stripes. Grok: white + dots.
-            (data.daily[i].cursor, TFT_WHITE, True, False, False),
-            (data.daily[i].glm, TFT_GREEN, False, False, False),
-            (data.daily[i].gemini, TFT_WHITE, False, True, False),
-            (data.daily[i].claude, TFT_RED, False, False, False),
-            (data.daily[i].gpt, TFT_YELLOW, False, False, False),
-            (data.daily[i].deepseek, TFT_BLUE, False, False, False),
-            (data.daily[i].grok, TFT_WHITE, False, False, True),
-            (data.daily[i].other, TFT_BLACK, False, False, False),
+            # Gemini: white + diagonal stripes (/). Grok: white + dots. Qwen: white + reverse stripes (\).
+            (data.daily[i].cursor, TFT_WHITE, True, False, False, False),
+            (data.daily[i].glm, TFT_GREEN, False, False, False, False),
+            (data.daily[i].gemini, TFT_WHITE, False, True, False, False),
+            (data.daily[i].claude, TFT_RED, False, False, False, False),
+            (data.daily[i].gpt, TFT_YELLOW, False, False, False, False),
+            (data.daily[i].deepseek, TFT_BLUE, False, False, False, False),
+            (data.daily[i].grok, TFT_WHITE, False, False, True, False),
+            (data.daily[i].qwen, TFT_WHITE, False, False, False, True),
+            (data.daily[i].other, TFT_BLACK, False, False, False, False),
         ]
-        for value, color, border_only, striped, dotted in segments:
+        for value, color, border_only, striped, dotted, reverse_striped in segments:
             yi = value / 1e8
             height = scaled_height(yi, max_value, rect.h - 2)
             if height <= 0:
@@ -440,6 +462,8 @@ def draw_stacked_chart(epaper: EPaperSim, data: DashboardData, rect: ChartRect, 
                     draw_diagonal_stripes(epaper, x, y_bottom, bar_width, height)
                 if dotted:
                     draw_dot_pattern(epaper, x, y_bottom, bar_width, height)
+                if reverse_striped:
+                    draw_reverse_diagonal_stripes(epaper, x, y_bottom, bar_width, height)
             epaper.draw_rect(x, y_bottom, bar_width, height, TFT_BLACK)
         if visible_index % label_stride == 0 or visible_index == count - 1:
             epaper.draw_string(x, rect.y + rect.h + 6, data.daily[i].date_label)
@@ -516,7 +540,8 @@ def render_dashboard(data: DashboardData, battery: BatteryStatus, mode: str = SE
     draw_legend_item(epaper, 640, 30, TFT_YELLOW, "GPT")
     draw_legend_item(epaper, 715, 30, TFT_BLUE, "DeepSeek")
     draw_legend_item_dotted(epaper, 570, 48, TFT_WHITE, "Grok")
-    draw_legend_item(epaper, 640, 48, TFT_BLACK, "Other")
+    draw_legend_item_reverse_striped(epaper, 640, 48, TFT_WHITE, "Qwen")
+    draw_legend_item(epaper, 715, 48, TFT_BLACK, "Other")
 
     epaper.draw_string(610, 456, f"Battery: {battery.percentage}% ({battery.voltage:.2f}V)")
 
@@ -550,6 +575,7 @@ def parse_dashboard_payload(payload: dict) -> DashboardData:
     data.gpt = int(cats.get("gpt_opencode", 0))
     data.deepseek = int(cats.get("deepseek", 0))
     data.grok = int(cats.get("grok", 0))
+    data.qwen = int(cats.get("qwen", 0))
     data.other = int(cats.get("other", 0))
 
     for day in payload.get("daily", []):
@@ -565,6 +591,7 @@ def parse_dashboard_payload(payload: dict) -> DashboardData:
         entry.gpt = int(dc.get("gpt_opencode", 0))
         entry.deepseek = int(dc.get("deepseek", 0))
         entry.grok = int(dc.get("grok", 0))
+        entry.qwen = int(dc.get("qwen", 0))
         entry.other = int(dc.get("other", 0))
         entry.total_tokens = int(day.get("total_tokens", 0))
         entry.ai_hours = float(day.get("ai_hours", 0.0) or 0.0)

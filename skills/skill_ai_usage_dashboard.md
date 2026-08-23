@@ -51,6 +51,7 @@ scripts/update-local-artifacts
 - GPT
 - DeepSeek
 - Grok
+- Qwen
 - Other
 - Total
 - AI Hours
