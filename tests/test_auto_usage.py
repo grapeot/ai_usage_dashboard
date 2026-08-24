@@ -15,6 +15,8 @@ from auto_usage import (
     build_codex_turn_intervals,
     build_opencode_turn_intervals,
     calc_claude_code_cost,
+    classify_dsh_bucket,
+    classify_model_bucket,
     classify_opencode_bucket,
     compute_daily_ai_active_seconds,
     date_to_epoch_ms,
@@ -141,6 +143,52 @@ def test_classify_opencode_bucket_custom_provider_glm_model_maps_to_glm_opencode
 
 def test_classify_opencode_bucket_unknown_provider_stays_other():
     assert classify_opencode_bucket('mistral', 'mistral-large-2411') == 'opencode_other'
+
+
+def test_classify_model_bucket_qwen_provider():
+    assert classify_model_bucket('qwen38', 'RadixArk/Qwen3.8-27B-NVFP4') == 'qwen'
+
+
+def test_classify_model_bucket_grok_provider():
+    assert classify_model_bucket('xai', 'grok-4.6') == 'grok'
+
+
+def test_classify_model_bucket_glm_by_model_name():
+    assert classify_model_bucket('ollama-cloud', 'glm-5.2') == 'glm_opencode'
+
+
+def test_classify_model_bucket_glm_excluded_when_flag_off():
+    assert classify_model_bucket('zai', 'glm-5.3', include_glm=False) == 'opencode_other'
+
+
+def test_classify_dsh_bucket_zai_glm_maps_to_glm():
+    assert classify_dsh_bucket('zai/glm-5.3') == 'glm_opencode'
+
+
+def test_classify_dsh_bucket_qwen_maps_to_qwen():
+    assert classify_dsh_bucket('qwen38/RadixArk/Qwen3.8-27B-NVFP4') == 'qwen'
+
+
+def test_classify_dsh_bucket_local_qwen_maps_to_qwen():
+    assert classify_dsh_bucket('lmstudio/qwen3.8-27b-mlx') == 'qwen'
+    assert classify_dsh_bucket('ollama/qwen3.8:27b') == 'qwen'
+
+
+def test_classify_dsh_bucket_grok_maps_to_grok():
+    assert classify_dsh_bucket('xai/grok-4.6') == 'grok'
+
+
+def test_classify_dsh_bucket_deepseek_maps_to_deepseek():
+    assert classify_dsh_bucket('deepseek/chat') == 'deepseek'
+
+
+def test_classify_dsh_bucket_local_glm_stays_other():
+    # Local GLM is free compute, not Z.ai plan usage; it stays in Other.
+    assert classify_dsh_bucket('lmstudio/glm-5.3') == 'opencode_other'
+
+
+def test_classify_dsh_bucket_unknown_stays_other():
+    assert classify_dsh_bucket('unknown') == 'opencode_other'
 
 
 def test_merge_intervals_collapses_overlap():

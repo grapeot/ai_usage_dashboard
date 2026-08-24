@@ -174,13 +174,18 @@ def date_to_epoch_ms(target_date: date) -> int:
     return int(datetime.combine(target_date, datetime.min.time()).timestamp() * 1000)
 
 
-def classify_opencode_bucket(provider_id: str, model_id: str, exclude_glm: bool = True) -> str | None:
+def classify_model_bucket(provider_id: str, model_id: str, *, include_glm: bool = True) -> str:
+    """Classify a (provider, model) pair into a display bucket by model identity.
+
+    Returns one of: 'glm_opencode', 'gemini', 'anthropic', 'gpt_opencode',
+    'deepseek', 'grok', 'qwen', 'opencode_other'. Shared by OpenCode and DSH
+    so the same model lands in the same column regardless of which local
+    source routed it.
+    """
     provider_lower = (provider_id or '').lower()
     model_lower = (model_id or '').lower()
 
-    if exclude_glm and (provider_lower in GLM_PROVIDERS or model_lower.startswith('zai-coding-plan/')):
-        return None
-    if model_lower.startswith(GLM_MODEL_PREFIXES):
+    if include_glm and model_lower.startswith(GLM_MODEL_PREFIXES):
         return 'glm_opencode'
     if 'google' in provider_lower or model_lower.startswith('google/') or 'gemini' in model_lower:
         return 'gemini'
@@ -199,6 +204,30 @@ def classify_opencode_bucket(provider_id: str, model_id: str, exclude_glm: bool 
     if 'qwen' in provider_lower or 'qwen' in model_lower:
         return 'qwen'
     return 'opencode_other'
+
+
+def classify_opencode_bucket(provider_id: str, model_id: str, exclude_glm: bool = True) -> str | None:
+    provider_lower = (provider_id or '').lower()
+    model_lower = (model_id or '').lower()
+
+    if exclude_glm and (provider_lower in GLM_PROVIDERS or model_lower.startswith('zai-coding-plan/')):
+        return None
+    return classify_model_bucket(provider_id, model_id)
+
+
+def classify_dsh_bucket(model_id: str) -> str:
+    """Classify a DSH model id ('provider/model') into a display bucket.
+
+    Z.ai-served GLM joins the GLM bucket (the Z.ai monitor API does not see
+    DSH-routed calls). Every other model is classified by model identity so
+    DSH-routed Qwen/Grok/etc. land in their own columns instead of 'Other'.
+    Local GLM (e.g. lmstudio/glm-*) stays in 'Other': it is free local
+    compute, not Z.ai plan usage.
+    """
+    if _dsh_usage.is_dsh_glm_model(model_id):
+        return 'glm_opencode'
+    provider, _, model = model_id.partition('/')
+    return classify_model_bucket(provider, model, include_glm=False)
 
 def load_env():
     env_path = os.path.join(SCRIPT_DIR, '.env')
@@ -2144,15 +2173,19 @@ def build_latest_dashboard_payload(days: int = 30, *, no_cost: bool = False, ski
 
     print("Loading DSH (DeepSeek Harness) data...")
     dsh_detailed = _dsh_usage.load_dsh_detailed(start_date=start_d, end_date=end_d)
-    dsh_glm: DailyTokens = {}
-    dsh_other: DailyTokens = {}
+    dsh_buckets: dict[str, DailyTokens] = {
+        key: {} for key in (
+            'glm_opencode', 'gemini', 'anthropic', 'gpt_opencode',
+            'deepseek', 'grok', 'qwen', 'opencode_other',
+        )
+    }
     for d, models in dsh_detailed.items():
         for model_id, tok in models.items():
             total = tok['input'] + tok['output'] + tok['cache_read'] + tok['cache_write']
             if total <= 0:
                 continue
-            target = dsh_glm if _dsh_usage.is_dsh_glm_model(model_id) else dsh_other
-            target[d] = target.get(d, 0) + total
+            bucket = classify_dsh_bucket(model_id)
+            dsh_buckets[bucket][d] = dsh_buckets[bucket].get(d, 0) + total
 
     print("Loading OpenCode data (excluding zai-coding-plan GLM, split: Anthropic / Gemini / GLM / GPT / DeepSeek / Grok / Qwen / other)...")
     opencode_data = load_opencode(exclude_glm=True, start_ts=start_day_ts, end_ts=next_day_ts)
@@ -2199,12 +2232,26 @@ def build_latest_dashboard_payload(days: int = 30, *, no_cost: bool = False, ski
         for d, v in calc_antigravity_cost(antigravity_detailed).items():
             if start_d <= d <= end_d:
                 daily_costs[d] = daily_costs.get(d, 0.0) + v
+    # Merge DSH-routed usage into the per-provider buckets before combining,
+    # so DSH sessions count toward the same columns as OpenCode/Antigravity.
+    for d, v in dsh_buckets['gemini'].items():
+        gemini[d] = gemini.get(d, 0) + v
+    for d, v in dsh_buckets['anthropic'].items():
+        claude_combined[d] = claude_combined.get(d, 0) + v
+    for d, v in dsh_buckets['gpt_opencode'].items():
+        gpt_opencode[d] = gpt_opencode.get(d, 0) + v
+    for d, v in dsh_buckets['deepseek'].items():
+        opencode_deepseek[d] = opencode_deepseek.get(d, 0) + v
+    for d, v in dsh_buckets['grok'].items():
+        opencode_grok[d] = opencode_grok.get(d, 0) + v
+    for d, v in dsh_buckets['qwen'].items():
+        opencode_qwen[d] = opencode_qwen.get(d, 0) + v
+    for d, v in dsh_buckets['opencode_other'].items():
+        opencode_other[d] = opencode_other.get(d, 0) + v
     gpt_combined = merge_daily_tokens(gpt_opencode, codex)
     # DSH zai/glm-* joins the GLM bucket: the Z.ai monitor API does not see
     # DSH-routed calls, so this adds usage the API bucket cannot double count.
-    glm_combined = merge_daily_tokens(glm, glm_opencode, dsh_glm)
-    for d, v in dsh_other.items():
-        opencode_other[d] = opencode_other.get(d, 0) + v
+    glm_combined = merge_daily_tokens(glm, glm_opencode, dsh_buckets['glm_opencode'])
     return generate_dashboard(cursor, glm_combined, gemini, dict(claude_combined), gpt_combined, opencode_deepseek, opencode_grok, opencode_qwen, opencode_other, start_date, end_date, daily_costs, daily_active_seconds=daily_active_seconds, skip_desktop_chart=skip_desktop_chart, glm_quota=glm_quota, quotas=quotas)
 
 def _load_cursor_detailed(path=None) -> dict[date, dict[str, dict[str, int]]]:
