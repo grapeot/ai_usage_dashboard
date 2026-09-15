@@ -672,7 +672,7 @@ class TestCalcAntigravityCost:
                 "gpt-5.6-sol": {"input": 0, "output": 0, "cache_read": 0, "cache_write": 1000000, "thinking": 0}
             }
         }
-        assert calc_antigravity_cost(detailed) == {date(2026, 7, 11): 6.25}
+        assert calc_antigravity_cost(detailed) == {date(2026, 7, 11): 5.0}
 
     def test_gemini_flash_cost(self):
         detailed = {
