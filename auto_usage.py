@@ -994,11 +994,30 @@ OLLAMA_SETTINGS_URL = 'https://ollama.com/settings'
 OUTPUT_OLLAMA_QUOTA_HTML = 'ollama_settings.html'
 
 
+def is_ollama_signin_page(html: str) -> bool:
+    """Detect the WorkOS AuthKit sign-in page that ollama.com redirects to.
+
+    An expired or invalid OLLAMA_COOKIE yields HTTP 200 with a "Sign in" page
+    instead of the settings HTML. Caching that page would silently wipe a
+    previously good quota snapshot and drop Ollama from the unified quotas.
+    """
+    if not html:
+        return False
+    title_match = re.search(r'<title[^>]*>([^<]*)</title>', html, re.IGNORECASE)
+    title = title_match.group(1).strip().lower() if title_match else ''
+    if 'sign in' in title or 'signin' in title:
+        return True
+    return 'signin.ollama.com' in html and 'data-time=' not in html
+
+
 def export_ollama_quota(cookie: str) -> str:
     """Fetch ollama.com/settings HTML and cache it to ollama_settings.html.
 
     Requires the full browser cookie string (cf_clearance + session). The page
     is server-rendered; the HTML is the source of quota data.
+
+    Raises RuntimeError on a sign-in redirect (expired cookie) so the caller
+    can warn and the previously cached good HTML stays untouched.
     """
     headers = {
         'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:152.0) Gecko/20100101 Firefox/152.0',
@@ -1008,6 +1027,8 @@ def export_ollama_quota(cookie: str) -> str:
     }
     resp = requests.get(OLLAMA_SETTINGS_URL, headers=headers)
     resp.raise_for_status()
+    if is_ollama_signin_page(resp.text):
+        raise RuntimeError('Ollama cookie expired: ollama.com/settings returned the sign-in page; refresh OLLAMA_COOKIE in .env')
     html_path = os.path.join(SCRIPT_DIR, OUTPUT_OLLAMA_QUOTA_HTML)
     with open(html_path, 'w') as f:
         f.write(resp.text)

@@ -6,6 +6,8 @@ from pathlib import Path
 from types import SimpleNamespace
 from typing import cast
 
+import pytest
+
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from auto_usage import (
@@ -23,10 +25,12 @@ from auto_usage import (
     export_claude_code_quota,
     export_codex_quota,
     export_cursor,
+    export_ollama_quota,
     format_glm_quota_block,
     format_quotas_block,
     generate_dashboard,
     glm_quota_to_unified,
+    is_ollama_signin_page,
     load_claude_code,
     load_claude_code_detailed,
     load_codex,
@@ -1376,6 +1380,62 @@ def test_load_ollama_quota_reads_cached_file(tmp_path):
 
 def test_load_ollama_quota_returns_empty_when_file_missing(tmp_path):
     assert load_ollama_quota(str(tmp_path / 'missing.html')) == []
+
+
+def test_is_ollama_signin_page_detects_authkit_redirect():
+    signin_html = (
+        '<!DOCTYPE html><html data-dpl-id="hosted-authkit-123"><head>'
+        '<title>Sign in</title></head><body></body></html>'
+    )
+    assert is_ollama_signin_page(signin_html) is True
+    assert is_ollama_signin_page(_OLLAMA_HTML_SAMPLE) is False
+    assert is_ollama_signin_page('') is False
+
+
+def test_export_ollama_quota_rejects_signin_page_without_caching(monkeypatch, tmp_path):
+    signin_html = '<html><head><title>Sign in</title></head><body></body></html>'
+
+    class FakeResp:
+        text = signin_html
+
+        def raise_for_status(self):
+            pass
+
+    captured = {}
+
+    def fake_get(url, headers=None):
+        captured['url'] = url
+        return FakeResp()
+
+    monkeypatch.setattr('auto_usage.requests.get', fake_get)
+    monkeypatch.setattr('auto_usage.SCRIPT_DIR', str(tmp_path))
+
+    with pytest.raises(RuntimeError, match='OLLAMA_COOKIE'):
+        export_ollama_quota('expired-cookie')
+
+    assert not (tmp_path / 'ollama_settings.html').exists()
+
+
+def test_export_ollama_quota_caches_settings_page(monkeypatch, tmp_path):
+    settings_html = (
+        '<html><head><title>Settings</title></head><body>'
+        '<span>47.1% used</span><div data-time="2026-06-28T22:00:00Z"></div>'
+        '</body></html>'
+    )
+
+    class FakeResp:
+        text = settings_html
+
+        def raise_for_status(self):
+            pass
+
+    monkeypatch.setattr('auto_usage.requests.get', lambda url, headers=None: FakeResp())
+    monkeypatch.setattr('auto_usage.SCRIPT_DIR', str(tmp_path))
+
+    result = export_ollama_quota('good-cookie')
+
+    assert result == settings_html
+    assert (tmp_path / 'ollama_settings.html').read_text() == settings_html
 
 
 # --- Claude Code quota ---
