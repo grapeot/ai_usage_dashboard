@@ -6,6 +6,8 @@ from pathlib import Path
 from types import SimpleNamespace
 from typing import cast
 
+import pytest
+
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from auto_usage import (
@@ -15,16 +17,20 @@ from auto_usage import (
     build_codex_turn_intervals,
     build_opencode_turn_intervals,
     calc_claude_code_cost,
+    classify_dsh_bucket,
+    classify_model_bucket,
     classify_opencode_bucket,
     compute_daily_ai_active_seconds,
     date_to_epoch_ms,
     export_claude_code_quota,
     export_codex_quota,
     export_cursor,
+    export_ollama_quota,
     format_glm_quota_block,
     format_quotas_block,
     generate_dashboard,
     glm_quota_to_unified,
+    is_ollama_signin_page,
     load_claude_code,
     load_claude_code_detailed,
     load_codex,
@@ -141,6 +147,52 @@ def test_classify_opencode_bucket_custom_provider_glm_model_maps_to_glm_opencode
 
 def test_classify_opencode_bucket_unknown_provider_stays_other():
     assert classify_opencode_bucket('mistral', 'mistral-large-2411') == 'opencode_other'
+
+
+def test_classify_model_bucket_qwen_provider():
+    assert classify_model_bucket('qwen38', 'RadixArk/Qwen3.8-27B-NVFP4') == 'qwen'
+
+
+def test_classify_model_bucket_grok_provider():
+    assert classify_model_bucket('xai', 'grok-4.6') == 'grok'
+
+
+def test_classify_model_bucket_glm_by_model_name():
+    assert classify_model_bucket('ollama-cloud', 'glm-5.2') == 'glm_opencode'
+
+
+def test_classify_model_bucket_glm_excluded_when_flag_off():
+    assert classify_model_bucket('zai', 'glm-5.3', include_glm=False) == 'opencode_other'
+
+
+def test_classify_dsh_bucket_zai_glm_maps_to_glm():
+    assert classify_dsh_bucket('zai/glm-5.3') == 'glm_opencode'
+
+
+def test_classify_dsh_bucket_qwen_maps_to_qwen():
+    assert classify_dsh_bucket('qwen38/RadixArk/Qwen3.8-27B-NVFP4') == 'qwen'
+
+
+def test_classify_dsh_bucket_local_qwen_maps_to_qwen():
+    assert classify_dsh_bucket('lmstudio/qwen3.8-27b-mlx') == 'qwen'
+    assert classify_dsh_bucket('ollama/qwen3.8:27b') == 'qwen'
+
+
+def test_classify_dsh_bucket_grok_maps_to_grok():
+    assert classify_dsh_bucket('xai/grok-4.6') == 'grok'
+
+
+def test_classify_dsh_bucket_deepseek_maps_to_deepseek():
+    assert classify_dsh_bucket('deepseek/chat') == 'deepseek'
+
+
+def test_classify_dsh_bucket_local_glm_stays_other():
+    # Local GLM is free compute, not Z.ai plan usage; it stays in Other.
+    assert classify_dsh_bucket('lmstudio/glm-5.3') == 'opencode_other'
+
+
+def test_classify_dsh_bucket_unknown_stays_other():
+    assert classify_dsh_bucket('unknown') == 'opencode_other'
 
 
 def test_merge_intervals_collapses_overlap():
@@ -1328,6 +1380,62 @@ def test_load_ollama_quota_reads_cached_file(tmp_path):
 
 def test_load_ollama_quota_returns_empty_when_file_missing(tmp_path):
     assert load_ollama_quota(str(tmp_path / 'missing.html')) == []
+
+
+def test_is_ollama_signin_page_detects_authkit_redirect():
+    signin_html = (
+        '<!DOCTYPE html><html data-dpl-id="hosted-authkit-123"><head>'
+        '<title>Sign in</title></head><body></body></html>'
+    )
+    assert is_ollama_signin_page(signin_html) is True
+    assert is_ollama_signin_page(_OLLAMA_HTML_SAMPLE) is False
+    assert is_ollama_signin_page('') is False
+
+
+def test_export_ollama_quota_rejects_signin_page_without_caching(monkeypatch, tmp_path):
+    signin_html = '<html><head><title>Sign in</title></head><body></body></html>'
+
+    class FakeResp:
+        text = signin_html
+
+        def raise_for_status(self):
+            pass
+
+    captured = {}
+
+    def fake_get(url, headers=None):
+        captured['url'] = url
+        return FakeResp()
+
+    monkeypatch.setattr('auto_usage.requests.get', fake_get)
+    monkeypatch.setattr('auto_usage.SCRIPT_DIR', str(tmp_path))
+
+    with pytest.raises(RuntimeError, match='OLLAMA_COOKIE'):
+        export_ollama_quota('expired-cookie')
+
+    assert not (tmp_path / 'ollama_settings.html').exists()
+
+
+def test_export_ollama_quota_caches_settings_page(monkeypatch, tmp_path):
+    settings_html = (
+        '<html><head><title>Settings</title></head><body>'
+        '<span>47.1% used</span><div data-time="2026-06-28T22:00:00Z"></div>'
+        '</body></html>'
+    )
+
+    class FakeResp:
+        text = settings_html
+
+        def raise_for_status(self):
+            pass
+
+    monkeypatch.setattr('auto_usage.requests.get', lambda url, headers=None: FakeResp())
+    monkeypatch.setattr('auto_usage.SCRIPT_DIR', str(tmp_path))
+
+    result = export_ollama_quota('good-cookie')
+
+    assert result == settings_html
+    assert (tmp_path / 'ollama_settings.html').read_text() == settings_html
 
 
 # --- Claude Code quota ---
