@@ -1195,7 +1195,7 @@ def parse_claude_timestamp(timestamp: str | None) -> datetime | None:
 def normalize_claude_model_id(model_id: str, speed: str) -> str:
     model_lower = (model_id or 'unknown').lower()
     if speed == 'fast' and 'claude' in model_lower and 'opus' in model_lower:
-        return 'claude-opus-4-6-fast'
+        return 'claude-opus-fast'
     return model_lower
 
 

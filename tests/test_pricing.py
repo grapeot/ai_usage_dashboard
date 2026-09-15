@@ -9,39 +9,54 @@ from pricing_config import get_pricing, calc_cost
 
 class TestGetPricing:
     def test_direct_match(self):
-        assert get_pricing("gpt-5.6-sol") == {"input": 5.0, "cached": 0.5, "cache_write": 6.25, "output": 30.0}
-        assert get_pricing("gpt-5.6-terra") == {"input": 2.5, "cached": 0.25, "cache_write": 3.125, "output": 15.0}
-        assert get_pricing("gpt-5.6-luna") == {"input": 1.0, "cached": 0.1, "cache_write": 1.25, "output": 6.0}
+        # GPT-5.6 promotional pricing (audit 2026-09-15).
+        assert get_pricing("gpt-5.6-sol") == {"input": 4.0, "cached": 0.4, "cache_write": 5.0, "output": 20.0}
+        assert get_pricing("gpt-5.6-terra") == {"input": 2.0, "cached": 0.2, "cache_write": 2.5, "output": 12.0}
+        assert get_pricing("gpt-5.6-luna") == {"input": 0.2, "cached": 0.02, "cache_write": 0.25, "output": 1.2}
+        assert get_pricing("gpt-6-astra") == {"input": 10.0, "cached": 1.0, "cache_write": 12.5, "output": 50.0}
         assert get_pricing("gpt-5.5") == {"input": 5.0, "cached": 0.5, "output": 30.0}
         assert get_pricing("gpt-5.4") == {"input": 2.5, "cached": 0.25, "output": 15.0}
         assert get_pricing("gpt-5.4-mini") == {"input": 0.75, "cached": 0.075, "output": 4.5}
         assert get_pricing("gpt-5.4-mini-fast") == {"input": 0.75, "cached": 0.075, "output": 4.5}
         assert get_pricing("gpt-5.2") == {"input": 1.75, "cached": 0.175, "output": 14.0}
         assert get_pricing("gpt-5.3-codex") == {"input": 1.75, "cached": 0.175, "output": 14.0}
-        assert get_pricing("grok-4") == {"input": 3.0, "cached": 0.75, "output": 15.0}
-        assert get_pricing("grok-4.5") == {"input": 2.0, "cached": 0.5, "output": 6.0}
-        assert get_pricing("xai/grok-4.5") == {"input": 2.0, "cached": 0.5, "output": 6.0}
-        assert get_pricing("x-ai/grok-4.5") == {"input": 2.0, "cached": 0.5, "output": 6.0}
+        # xAI current Text API models; retired slugs bill at grok-4.3 rates.
+        assert get_pricing("grok-4.3") == {"input": 1.25, "cached": 0.125, "output": 2.5}
+        assert get_pricing("grok-4") == {"input": 1.25, "cached": 0.125, "output": 2.5}
+        assert get_pricing("grok-4-1-fast") == {"input": 1.25, "cached": 0.125, "output": 2.5}
+        assert get_pricing("grok-code-fast-1") == {"input": 1.0, "cached": 0.2, "output": 2.0}
+        assert get_pricing("grok-4.5") == {"input": 2.0, "cached": 0.3, "output": 6.0}
+        assert get_pricing("xai/grok-4.5") == {"input": 2.0, "cached": 0.3, "output": 6.0}
+        assert get_pricing("x-ai/grok-4.5") == {"input": 2.0, "cached": 0.3, "output": 6.0}
         assert get_pricing("grok-4.5-fast") == {"input": 4.0, "cached": 1.0, "output": 18.0}
         assert get_pricing("grok-4.6") == {"input": 2.0, "cached": 0.5, "output": 6.0}
         assert get_pricing("grok-4.6-fast") == {"input": 4.0, "cached": 1.0, "output": 12.0}
-        assert get_pricing("grok-4-1-fast") == {"input": 0.2, "cached": 0.05, "output": 0.5}
-        assert get_pricing("grok-code-fast-1") == {"input": 0.2, "cached": 0.02, "output": 1.5}
         assert get_pricing("glm-5.1") == {"input": 1.4, "cached": 0.26, "output": 4.4}
         assert get_pricing("glm-5.2") == {"input": 1.4, "cached": 0.26, "output": 4.4}
+        assert get_pricing("glm-5.3") == {"input": 1.4, "cached": 0.26, "output": 4.4}
+        assert get_pricing("glm-5.3-flash") == {"input": 0.15, "cached": 0.03, "output": 0.5}
         assert get_pricing("glm-5") == {"input": 1.0, "cached": 0.2, "output": 3.2}
         assert get_pricing("glm-5-turbo") == {"input": 1.2, "cached": 0.24, "output": 4.0}
         assert get_pricing("gemini-3-flash") == {"input": 0.5, "output": 3.0}
         assert get_pricing("gemini-3-flash-preview") == {"input": 0.5, "output": 3.0}
         assert get_pricing("gemini-3.6-flash") == {"input": 0.75, "cached": 0.075, "output": 3.75}
+        assert get_pricing("gemini-3.8-flash") == {"input": 0.75, "cached": 0.075, "output": 3.75}
+        assert get_pricing("gemini-3.7-flash") == {"input": 0.75, "cached": 0.075, "output": 3.75}
+        assert get_pricing("gemini-3.5-flash") == {"input": 1.5, "cached": 0.15, "output": 9.0}
         assert get_pricing("gemini-3.1-pro-preview") == {"input": 2.0, "output": 12.0}
-        assert get_pricing("deepseek-v4-flash") == {"input": 0.14, "cached": 0.0028, "output": 0.28}
-        assert get_pricing("deepseek-v4-pro") == {"input": 0.435, "cached": 0.003625, "output": 0.87}
+        # DeepSeek peak/off-peak dual track (2026-08-16): off-peak column.
+        assert get_pricing("deepseek-v4-flash") == {"input": 0.22, "cached": 0.007, "output": 0.66}
+        # v4-pro requests route to V4.1 Flash at flash rates since 2026-09-14.
+        assert get_pricing("deepseek-v4-pro") == {"input": 0.22, "cached": 0.007, "output": 0.66}
         assert get_pricing("claude-fable-5") == {"input": 10.0, "cache_read": 1.0, "cache_write": 12.5, "cache_write_1h": 20.0, "output": 50.0}
+        assert get_pricing("claude-fable-5-1") == {"input": 10.0, "cache_read": 0.25, "cache_write": 12.5, "cache_write_1h": 20.0, "output": 50.0}
         assert get_pricing("grok-build-0.1") == {"input": 1.0, "cached": 0.2, "output": 2.0}
         assert get_pricing("kimi-k2.6") == {"input": 0.95, "cached": 0.16, "output": 4.0}
         assert get_pricing("minimax-m3") == {"input": 0.3, "cached": 0.06, "output": 1.2}
-        assert get_pricing("qwen3.5-397b-a17b") == {"input": 0.39, "output": 2.34}
+        # Alibaba Model Studio international (Singapore) rates.
+        assert get_pricing("qwen3.5-397b-a17b") == {"input": 0.6, "output": 3.6}
+        assert get_pricing("qwen3.8-27b") == {"input": 0.5, "output": 3.0}
+        assert get_pricing("qwen-3.8-27b") == {"input": 0.5, "output": 3.0}
 
     def test_alias_antigravity(self):
         p = get_pricing("antigravity-gemini-3-flash")
@@ -49,11 +64,12 @@ class TestGetPricing:
         assert get_pricing("antigravity-gemini-3-pro") == {"input": 2.0, "output": 12.0}
 
     def test_alias_deepseek_legacy_ids(self):
-        assert get_pricing("deepseek-chat") == {"input": 0.14, "cached": 0.0028, "output": 0.28}
-        assert get_pricing("deepseek-reasoner") == {"input": 0.14, "cached": 0.0028, "output": 0.28}
+        assert get_pricing("deepseek-chat") == {"input": 0.22, "cached": 0.007, "output": 0.66}
+        assert get_pricing("deepseek-reasoner") == {"input": 0.22, "cached": 0.007, "output": 0.66}
 
     def test_deepseek_prefix_match(self):
-        assert get_pricing("deepseek-v4-flash-thinking") == {"input": 0.14, "cached": 0.0028, "output": 0.28}
+        assert get_pricing("deepseek-v4-flash-thinking") == {"input": 0.22, "cached": 0.007, "output": 0.66}
+        assert get_pricing("deepseek-v4.1-flash") == {"input": 0.22, "cached": 0.007, "output": 0.66}
 
     def test_case_insensitive(self):
         assert get_pricing("GPT-5.3-CODEX") == get_pricing("gpt-5.3-codex")
@@ -78,12 +94,29 @@ class TestGetPricing:
         assert get_pricing("composer-2.5") == get_pricing("cursor-composer-2.5")
 
     def test_claude_fast_variant(self):
-        assert get_pricing("claude-opus-4-6-fast") == {"input": 30.0, "cache_read": 3.0, "cache_write": 37.5, "cache_write_1h": 60.0, "output": 150.0}
+        # Fast mode is a request parameter priced at 2x standard ($10/$50).
+        assert get_pricing("claude-opus-4-6-fast") == {"input": 10.0, "cache_read": 1.0, "cache_write": 12.5, "cache_write_1h": 20.0, "output": 50.0}
+        assert get_pricing("claude-opus-5-fast") == get_pricing("claude-opus-fast")
+
+    def test_claude_sonnet_5(self):
+        # Sonnet 5 $2/$10 launch price became the long-term standard price.
+        assert get_pricing("claude-sonnet-5") == {"input": 2.0, "cache_read": 0.2, "cache_write": 2.5, "cache_write_1h": 4.0, "output": 10.0}
+        assert get_pricing("claude-sonnet-5-thinking") == get_pricing("claude-sonnet-5")
+
+    def test_openai_fast_and_reasoning_suffixes(self):
+        # Fast mode = 2x standard for GPT models (per-token premium).
+        assert get_pricing("gpt-5.6-sol-fast") == {"input": 8.0, "cached": 0.8, "cache_write": 10.0, "output": 40.0}
+        assert get_pricing("gpt-5.6-terra-fast") == {"input": 4.0, "cached": 0.4, "cache_write": 5.0, "output": 24.0}
+        assert get_pricing("gpt-6-astra-fast") == {"input": 20.0, "cached": 2.0, "cache_write": 25.0, "output": 100.0}
+        # pro/low/medium/high are reasoning parameters, priced at base rate.
+        assert get_pricing("gpt-5.6-sol-pro") == get_pricing("gpt-5.6-sol")
+        assert get_pricing("gpt-6-astra-low") == get_pricing("gpt-6-astra")
 
     def test_grok_aliases(self):
-        assert get_pricing("grok-4-1-fast-non-reasoning") == {"input": 0.2, "cached": 0.05, "output": 0.5}
-        assert get_pricing("grok-4-1-fast-reasoning") == {"input": 0.2, "cached": 0.05, "output": 0.5}
-        assert get_pricing("grok-4.20-experimental-beta-0304-non-reasoning") == {"input": 0.2, "cached": 0.05, "output": 0.5}
+        # Retired grok-4.20/grok-4-1-fast slugs redirect to grok-4.3 billing.
+        assert get_pricing("grok-4-1-fast-non-reasoning") == {"input": 1.25, "cached": 0.125, "output": 2.5}
+        assert get_pricing("grok-4-1-fast-reasoning") == {"input": 1.25, "cached": 0.125, "output": 2.5}
+        assert get_pricing("grok-4.20-experimental-beta-0304-non-reasoning") == {"input": 1.25, "cached": 0.125, "output": 2.5}
         assert get_pricing("xai/grok-4.6") == get_pricing("grok-4.6")
         assert get_pricing("cursor-grok-4.6-high") == get_pricing("grok-4.6")
         assert get_pricing("grok-4.6-fast-reasoning") == get_pricing("grok-4.6-fast")
@@ -100,8 +133,8 @@ class TestGetPricing:
         assert get_pricing("nemotron-3.5-lightning:30b-mlx") == free
 
     def test_new_model_aliases(self):
-        assert get_pricing("qwen3.5:397b") == {"input": 0.39, "output": 2.34}
-        assert get_pricing("qwen3.5:397b-cloud") == {"input": 0.39, "output": 2.34}
+        assert get_pricing("qwen3.5:397b") == {"input": 0.6, "output": 3.6}
+        assert get_pricing("qwen3.5:397b-cloud") == {"input": 0.6, "output": 3.6}
         assert get_pricing("minimax-m3:cloud") == get_pricing("minimax-m3")
         assert get_pricing("kimi-k2.6:cloud") == get_pricing("kimi-k2.6")
 
@@ -149,4 +182,4 @@ class TestCalcCost:
     def test_gpt_5_6_cache_write_rate(self):
         p = get_pricing("gpt-5.6-sol")
         cost = calc_cost(p, input_tokens=0, cache_write_tokens=1_000_000)
-        assert cost == 6.25
+        assert cost == 5.0

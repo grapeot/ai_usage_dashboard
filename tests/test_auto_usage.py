@@ -815,7 +815,7 @@ def test_calc_claude_code_cost_uses_fast_variant_pricing():
     }
 
     result = calc_claude_code_cost(detailed)
-    expected = (0.1 * 30.0) + (0.05 * 3.0) + (0.02 * 37.5) + (0.01 * 150.0)
+    expected = (0.1 * 10.0) + (0.05 * 1.0) + (0.02 * 12.5) + (0.01 * 50.0)
     assert abs(result[date(2026, 3, 20)] - expected) < 0.01
 
 
@@ -828,7 +828,7 @@ def test_load_claude_code_detailed_normalizes_fast_opus_variant_with_dotted_mode
     )
 
     detailed = load_claude_code_detailed(project_dirs=[projects_dir])
-    assert detailed[date(2026, 3, 20)]["claude-opus-4-6-fast"] == {
+    assert detailed[date(2026, 3, 20)]["claude-opus-fast"] == {
         'input': 100,
         'output': 5,
         'cache_read': 10,
