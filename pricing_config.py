@@ -21,8 +21,12 @@ MODEL_PRICING = {
     "gpt-5.2": {"input": 1.75, "cached": 0.175, "output": 14.0},
     "gpt-5.2-codex": {"input": 1.75, "cached": 0.175, "output": 14.0},
     "gpt-5.3-codex": {"input": 1.75, "cached": 0.175, "output": 14.0},
-    # xAI pricing page (Sep 7, 2026): only grok-4.6 / grok-4.5 / grok-4.3 /
-    # grok-build-0.1 / grok-4.20 remain in the current Text API table.
+    # xAI pricing (verified via /v1/language-models, 2026-09-21): the current
+    # Text API table lists grok-4.6 and grok-4.7, both at $2/$0.50/$6
+    # (short-context <200k); fast tier bills 2x. grok-4.5 / grok-4.3 /
+    # grok-build-0.1 / grok-4.20 also remain. Keep 4.6 as its own key: historical
+    # sessions carry the grok-4.6 model id and must price at the real 4.6 rate,
+    # not fall through to the grok-4.3 legacy bucket.
     # grok-4 and grok-4-1-fast slugs were retired 2026-05-15 and bill at
     # grok-4.3 rates; kept here with grok-4.3 prices for cost estimation.
     "grok-4.3": {"input": 1.25, "cached": 0.125, "output": 2.5},
@@ -30,10 +34,14 @@ MODEL_PRICING = {
     "grok-4.5": {"input": 2.0, "cached": 0.3, "output": 6.0},
     # Cursor Fast variant for Grok 4.5 ($4/$1/$18 per Cursor docs).
     "grok-4.5-fast": {"input": 4.0, "cached": 1.0, "output": 18.0},
-    # xAI docs (Aug 12, 2026): short-context <200k = $2/$0.50/$6; fast = 2x.
+    # Grok 4.6: $2/$0.50/$6; still billable and used by historical sessions.
     "grok-4.6": {"input": 2.0, "cached": 0.5, "output": 6.0},
-    # Cursor Fast variant: $4/$1/$12.
+    # Cursor Fast variant for Grok 4.6 ($4/$1/$12).
     "grok-4.6-fast": {"input": 4.0, "cached": 1.0, "output": 12.0},
+    # Grok 4.7 (current release 2026-09): same rates as 4.6, $2/$0.50/$6.
+    "grok-4.7": {"input": 2.0, "cached": 0.5, "output": 6.0},
+    # Cursor Fast variant for Grok 4.7 ($4/$1/$12).
+    "grok-4.7-fast": {"input": 4.0, "cached": 1.0, "output": 12.0},
     # Retired slugs (May 15, 2026) redirected to grok-4.3 billing; keep the
     # redirected prices so legacy session ids still estimate correctly.
     "grok-4": {"input": 1.25, "cached": 0.125, "output": 2.5},
@@ -111,6 +119,12 @@ MODEL_ALIASES = {
     "cursor-grok-4.6": "grok-4.6",
     "grok-4.6-fast-reasoning": "grok-4.6-fast",
     "grok-4.6-fast-non-reasoning": "grok-4.6-fast",
+    "xai/grok-4.7": "grok-4.7",
+    "x-ai/grok-4.7": "grok-4.7",
+    "cursor-grok-4.7-high": "grok-4.7",
+    "cursor-grok-4.7": "grok-4.7",
+    "grok-4.7-fast-reasoning": "grok-4.7-fast",
+    "grok-4.7-fast-non-reasoning": "grok-4.7-fast",
     "antigravity-gemini-3-pro": "gemini-3.1-pro-preview",
     "qwen3.5:397b": "qwen3.5-397b-a17b",
     "qwen3.5:397b-cloud": "qwen3.5-397b-a17b",
@@ -189,6 +203,10 @@ def get_pricing(model_id: str) -> Pricing | None:
         return MODEL_PRICING["grok-build-0.1"].copy()
     if model_lower.startswith("grok-4-1-fast"):
         return MODEL_PRICING["grok-4.3"].copy()
+    if "grok-4.7" in model_lower and "fast" in model_lower:
+        return MODEL_PRICING["grok-4.7-fast"].copy()
+    if "grok-4.7" in model_lower:
+        return MODEL_PRICING["grok-4.7"].copy()
     if "grok-4.6" in model_lower and "fast" in model_lower:
         return MODEL_PRICING["grok-4.6-fast"].copy()
     if "grok-4.6" in model_lower:

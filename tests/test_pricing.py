@@ -29,8 +29,12 @@ class TestGetPricing:
         assert get_pricing("xai/grok-4.5") == {"input": 2.0, "cached": 0.3, "output": 6.0}
         assert get_pricing("x-ai/grok-4.5") == {"input": 2.0, "cached": 0.3, "output": 6.0}
         assert get_pricing("grok-4.5-fast") == {"input": 4.0, "cached": 1.0, "output": 18.0}
+        # grok-4.6 and grok-4.7 are distinct billable models (both $2/$0.50/$6);
+        # 4.6 must not fall through to the grok-4.3 legacy bucket.
         assert get_pricing("grok-4.6") == {"input": 2.0, "cached": 0.5, "output": 6.0}
         assert get_pricing("grok-4.6-fast") == {"input": 4.0, "cached": 1.0, "output": 12.0}
+        assert get_pricing("grok-4.7") == {"input": 2.0, "cached": 0.5, "output": 6.0}
+        assert get_pricing("grok-4.7-fast") == {"input": 4.0, "cached": 1.0, "output": 12.0}
         assert get_pricing("glm-5.1") == {"input": 1.4, "cached": 0.26, "output": 4.4}
         assert get_pricing("glm-5.2") == {"input": 1.4, "cached": 0.26, "output": 4.4}
         assert get_pricing("glm-5.3") == {"input": 1.4, "cached": 0.26, "output": 4.4}
@@ -117,9 +121,15 @@ class TestGetPricing:
         assert get_pricing("grok-4-1-fast-non-reasoning") == {"input": 1.25, "cached": 0.125, "output": 2.5}
         assert get_pricing("grok-4-1-fast-reasoning") == {"input": 1.25, "cached": 0.125, "output": 2.5}
         assert get_pricing("grok-4.20-experimental-beta-0304-non-reasoning") == {"input": 1.25, "cached": 0.125, "output": 2.5}
+        assert get_pricing("xai/grok-4.7") == get_pricing("grok-4.7")
+        assert get_pricing("cursor-grok-4.7-high") == get_pricing("grok-4.7")
+        assert get_pricing("grok-4.7-fast-reasoning") == get_pricing("grok-4.7-fast")
+        # grok-4.6 aliases + regression guard: 4.6 must price at its own rate,
+        # never fall through to the grok-4.3 legacy bucket.
         assert get_pricing("xai/grok-4.6") == get_pricing("grok-4.6")
         assert get_pricing("cursor-grok-4.6-high") == get_pricing("grok-4.6")
         assert get_pricing("grok-4.6-fast-reasoning") == get_pricing("grok-4.6-fast")
+        assert get_pricing("grok-4.6") != get_pricing("grok-4.3")
 
     def test_glm_52_and_gemini_36(self):
         assert get_pricing("zai/glm-5.2") == get_pricing("glm-5.2")
