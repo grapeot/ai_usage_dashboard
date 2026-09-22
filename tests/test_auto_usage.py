@@ -154,6 +154,7 @@ def test_classify_model_bucket_qwen_provider():
 
 
 def test_classify_model_bucket_grok_provider():
+    assert classify_model_bucket('xai', 'grok-4.7') == 'grok'
     assert classify_model_bucket('xai', 'grok-4.6') == 'grok'
 
 
@@ -179,6 +180,7 @@ def test_classify_dsh_bucket_local_qwen_maps_to_qwen():
 
 
 def test_classify_dsh_bucket_grok_maps_to_grok():
+    assert classify_dsh_bucket('xai/grok-4.7') == 'grok'
     assert classify_dsh_bucket('xai/grok-4.6') == 'grok'
 
 
