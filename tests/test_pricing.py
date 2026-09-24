@@ -61,6 +61,11 @@ class TestGetPricing:
         assert get_pricing("qwen3.5-397b-a17b") == {"input": 0.6, "output": 3.6}
         assert get_pricing("qwen3.8-27b") == {"input": 0.5, "output": 3.0}
         assert get_pricing("qwen-3.8-27b") == {"input": 0.5, "output": 3.0}
+        # OpenRouter rates (verified via openrouter.ai/api/v1/models, 2026-09-24).
+        assert get_pricing("qwen/qwen3.8-27b") == {"input": 0.42, "cached": 0.085, "output": 3.0}
+        assert get_pricing("openrouter/qwen/qwen3.8-27b") == get_pricing("qwen/qwen3.8-27b")
+        # OpenRouter :free variant bills $0.
+        assert get_pricing("qwen/qwen3.8-27b:free") == {"input": 0.0, "cached": 0.0, "output": 0.0}
 
     def test_alias_antigravity(self):
         p = get_pricing("antigravity-gemini-3-flash")
@@ -141,6 +146,18 @@ class TestGetPricing:
         assert get_pricing("lmstudio/qwen3.8-27b-mlx@4bit") == free
         assert get_pricing("muse-glimmer:30b-mlx") == free
         assert get_pricing("nemotron-3.5-lightning:30b-mlx") == free
+        # llama.cpp / MTPLX packs are local inference runtimes.
+        assert get_pricing("llamacpp/qwen3.8-flash-next") == free
+        assert get_pricing("mtplx/flash-next-mplx-pack") == free
+
+    def test_ollama_cloud_prefix(self):
+        # Ollama Cloud serves third-party models at their official rates.
+        assert get_pricing("ollama-cloud/glm-5.3-flash") == get_pricing("glm-5.3-flash")
+        assert get_pricing("ollama-cloud/glm-5.2") == get_pricing("glm-5.2")
+        assert get_pricing("zai/glm-5.3-flash") == get_pricing("glm-5.3-flash")
+
+    def test_gemini_31_pro_alias(self):
+        assert get_pricing("gemini-3.1-pro") == get_pricing("gemini-3.1-pro-preview")
 
     def test_new_model_aliases(self):
         assert get_pricing("qwen3.5:397b") == {"input": 0.6, "output": 3.6}
