@@ -1,7 +1,9 @@
 """
 Model pricing config: lookup official API prices by model name, independent of source.
 Reference: docs/rfc.md
-Updated: 2026-09 (full pricing audit 2026-09-15; evidence in workspace tmp/pricing_audit_20260915/)
+Updated: 2026-09 (full pricing audit 2026-09-15; evidence in workspace tmp/pricing_audit_20260915/;
+2026-09-24: OpenRouter Qwen3.8 27B rates, ollama-cloud / llamacpp / mtplx and
+zai/glm-5.3-flash gaps closed from a 30-day usage audit)
 """
 import re
 # model name -> official price ($/M tokens)
@@ -97,6 +99,9 @@ MODEL_PRICING = {
     # Alibaba Model Studio international (Singapore) rates.
     "qwen3.5-397b-a17b": {"input": 0.6, "output": 3.6},
     "qwen3.8-27b": {"input": 0.5, "output": 3.0},
+    # OpenRouter rates for Qwen3.8 27B (verified via openrouter.ai/api/v1/models,
+    # 2026-09-24): input $0.42/M, cached input $0.085/M, output $3.00/M.
+    "qwen/qwen3.8-27b": {"input": 0.42, "cached": 0.085, "output": 3.0},
     "local-free": {"input": 0.0, "cached": 0.0, "output": 0.0},
 }
 
@@ -126,12 +131,17 @@ MODEL_ALIASES = {
     "grok-4.7-fast-reasoning": "grok-4.7-fast",
     "grok-4.7-fast-non-reasoning": "grok-4.7-fast",
     "antigravity-gemini-3-pro": "gemini-3.1-pro-preview",
+    # Cursor labels Gemini 3.1 Pro without the -preview suffix.
+    "gemini-3.1-pro": "gemini-3.1-pro-preview",
     "qwen3.5:397b": "qwen3.5-397b-a17b",
     "qwen3.5:397b-cloud": "qwen3.5-397b-a17b",
     "qwen3.5-397b": "qwen3.5-397b-a17b",
+    # OpenRouter free variant of Qwen3.8 27B bills $0.
+    "qwen/qwen3.8-27b:free": "local-free",
     # DSH routes Z.ai GLM 5.3 through its own client; same published rates.
     "zai/glm-5.3": "glm-5.3",
     "zai/glm-5.2": "glm-5.2",
+    "zai/glm-5.3-flash": "glm-5.3-flash",
 }
 
 Pricing = dict[str, float]
@@ -143,9 +153,11 @@ def get_pricing(model_id: str) -> Pricing | None:
     if not model_lower:
         return None
     # Strip common provider prefixes from OpenRouter / OpenCode-style ids.
+    # ollama-cloud serves third-party models (Z.ai, DeepSeek, ...) at their
+    # official rates, so the bare model id prices correctly.
     if "/" in model_lower:
         prefix, remainder = model_lower.split("/", 1)
-        if prefix in {"xai", "x-ai", "openrouter", "opencode"} and remainder:
+        if prefix in {"xai", "x-ai", "openrouter", "opencode", "ollama-cloud"} and remainder:
             model_lower = remainder
     # direct match
     if model_lower in MODEL_PRICING:
@@ -231,7 +243,13 @@ def get_pricing(model_id: str) -> Pricing | None:
         return MODEL_PRICING["gemini-3.5-flash"].copy()
     if "gemini-3.6-flash" in model_lower:
         return MODEL_PRICING["gemini-3.6-flash"].copy()
-    if model_lower.startswith("lmstudio/") or "-mlx" in model_lower:
+    # Local inference runtimes (LM Studio, llama.cpp, MTPLX packs) bill $0.
+    if (
+        model_lower.startswith("lmstudio/")
+        or model_lower.startswith("llamacpp/")
+        or model_lower.startswith("mtplx/")
+        or "-mlx" in model_lower
+    ):
         return MODEL_PRICING["local-free"].copy()
     if model_lower.startswith("deepseek-v4-flash"):
         return MODEL_PRICING["deepseek-v4-flash"].copy()
