@@ -193,6 +193,8 @@ def provider_color(provider: str) -> tuple[int, int, int]:
         "claude": TFT_RED,
         "antigravity": TFT_CYAN,
         "grok": TFT_BLACK,
+        # 1-bit panel: mid-gray packs >= 128 and renders white; use black.
+        "cursor": TFT_BLACK,
     }.get(provider, TFT_BLACK)
 
 

@@ -149,6 +149,11 @@ inline uint16_t providerColor(const String& provider) {
   if (provider == "claude") {
     return TFT_RED;
   }
+  // Do not use mid-gray fills on this panel: the sketch runs the E1002 in
+  // 1-bit mode (no initGrayMode), and the 8bpp buffer byte is thresholded.
+  // 0x8210 packs (RGB332) to 138 >= 128 and renders as WHITE, making a full
+  // bar look empty. Every solid color below 0x80 packs under 128 and renders
+  // as black, so quota fills are black (labels disambiguate providers).
   return TFT_BLACK;
 }
 

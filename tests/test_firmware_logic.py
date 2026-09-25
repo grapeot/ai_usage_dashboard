@@ -131,6 +131,8 @@ def test_provider_color_maps_known_providers():
     assert provider_color("codex") == "yellow"
     assert provider_color("claude") == "red"
     assert provider_color("ollama") == "cyan"
+    # 1-bit panel thresholding: mid-gray would render white, so cursor uses black.
+    assert provider_color("cursor") == "black"
     assert provider_color("unknown") == "black"
 
 

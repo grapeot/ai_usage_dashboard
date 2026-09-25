@@ -23,7 +23,7 @@ You do not need every platform connected on day one. The tool enables each sourc
 - **Codex**: If you use Codex CLI, the tool reads local Codex sessions by default. No API key is required.
 - **Claude Code**: If you use Claude Code, the tool reads local Claude Code project JSONL logs by default. No API key is required.
 - **OpenCode**: If you use OpenCode, the tool reads the main local OpenCode SQLite database by default. If you also use `opencode_skill` for archive querying, set `AI_USAGE_OPENCODE_SKILL_PATH` in `.env`.
-- **Cursor**: To include Cursor dashboard exports, set `CURSOR_COOKIE` in `.env`. This browser cookie must stay private.
+- **Cursor**: To include Cursor dashboard exports, set `CURSOR_COOKIE` in `.env`. This browser cookie must stay private. With the cookie present, the dashboard also fetches `GET /api/usage-summary` and adds the two monthly quota windows shown on the Cursor spending page to the unified `quotas` array: `Cursor Models` (the "Cursor models" bar = Composer + Cursor's own models, `autoPercentUsed`) and `Cursor Other` (the "Other models" bar = other named/frontier models, `apiPercentUsed`), both resetting at the billing-cycle end. An expired cookie returns a non-JSON login page, which is rejected so the last good cached snapshot (`cursor_usage_summary.json`) is preserved.
 - **Grok**: To include SuperGrok / X Premium weekly usage pool, set `GROK_COOKIE` in `.env` (browser cookie from grok.com while logged in). This cookie must stay private. A 0% week omits the float field in the grpc-web response (proto3 default); the parser maps that to 0% so the quota bar still appears. Token category `grok` is filled from local OpenCode usage independently of the cookie.
 - **GLM/Z.ai**: To include the GLM/Z.ai usage API, set `GLM_BEARER_TOKEN` in `.env`. This bearer token must stay private.
 
@@ -92,7 +92,7 @@ If a LAN device needs access, configure the host through private local config or
 ## Data Sources
 
 - Codex: `npx @ccusage/codex@latest --json`
-- Cursor: `cursor.com/api/dashboard/export-usage-events-csv`, with a private browser cookie
+- Cursor: `cursor.com/api/dashboard/export-usage-events-csv` (usage) and `cursor.com/api/usage-summary` (monthly quota), with a private browser cookie
 - GLM/Z.ai: usage API, with a private bearer token
 - Claude Code: local Claude Code JSONL session logs
 - DeepSeek Harness (DSH): local `~/.dsh/sessions` logs (plain or Zstandard-compressed JSONL; the `zstd` binary must be on PATH for compressed logs). Z.ai GLM usage routed through DSH joins the GLM bucket because the Z.ai usage API does not see it; local models (e.g. LM Studio) are reported in the Other bucket at $0

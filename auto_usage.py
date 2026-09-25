@@ -658,6 +658,85 @@ def load_cursor(path=None):
                 continue
     return dict(daily)
 
+CURSOR_USAGE_SUMMARY_URL = 'https://cursor.com/api/usage-summary'
+OUTPUT_CURSOR_QUOTA_JSON = 'cursor_usage_summary.json'
+
+def normalize_cursor_quota(body: dict[str, object] | None) -> list[QuotaSnapshot]:
+    """Parse Cursor's monthly usage windows from the usage-summary payload.
+
+    The /dashboard/spending page shows two bars that both reset at the end of
+    the billing cycle: "Cursor models" (Composer + Cursor's own frontier
+    models, autoPercentUsed) and "Other models" (other named/frontier models,
+    apiPercentUsed), verified against the live page. totalPercentUsed is the
+    whole-pool gauge used by the "X% of your included total usage" message,
+    not a bar value. We emit one unified snapshot per bar; the reset time is
+    billingCycleEnd for both.
+    """
+    if not isinstance(body, dict) or not body or body.get('isUnlimited'):
+        return []
+    individual = body.get('individualUsage')
+    plan = individual.get('plan') if isinstance(individual, dict) else None
+    if not isinstance(plan, dict) or not plan.get('enabled'):
+        return []
+    try:
+        cursor_models_pct = float(plan.get('autoPercentUsed') or 0.0)
+        api_pct = float(plan.get('apiPercentUsed') or 0.0)
+    except (TypeError, ValueError):
+        return []
+    cycle_end = body.get('billingCycleEnd')
+    reset_ms = _iso_utc_to_epoch_ms(cycle_end) if isinstance(cycle_end, str) else None
+    reset_iso = _iso_utc_to_local(cycle_end) if isinstance(cycle_end, str) else None
+    snapshots: list[QuotaSnapshot] = []
+    # Labels render as "<Provider> <label>" on the e-ink: "Cursor Models" and
+    # "Cursor Other". "Other Models" in full would overflow the 195px panel.
+    for label, pct in (('Models', cursor_models_pct), ('Other', api_pct)):
+        snapshots.append({
+            'provider': 'cursor',
+            'label': label,
+            'percentage': int(round(min(100.0, max(0.0, pct)))),
+            'next_reset_time_ms': reset_ms,
+            'next_reset_iso': reset_iso,
+        })
+    return snapshots
+
+def export_cursor_quota(cookie: str) -> dict[str, object]:
+    """Fetch cursor.com/api/usage-summary and cache it to cursor_usage_summary.json.
+
+    Requires the same browser cookie as the usage CSV export. An expired
+    cookie yields a non-JSON login page; we raise so the caller warns and the
+    previously cached snapshot stays untouched.
+    """
+    headers = {
+        'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:156.0) Gecko/20100101 Firefox/156.0',
+        'Accept': 'application/json, text/plain, */*',
+        'Referer': 'https://cursor.com/dashboard/usage',
+        'Cookie': cookie,
+    }
+    resp = requests.get(CURSOR_USAGE_SUMMARY_URL, headers=headers)
+    resp.raise_for_status()
+    try:
+        body = resp.json()
+    except ValueError:
+        raise RuntimeError('Cursor cookie expired: usage-summary returned non-JSON (likely a login page); refresh CURSOR_COOKIE in .env')
+    if not isinstance(body, dict) or 'billingCycleStart' not in body:
+        raise RuntimeError('Cursor cookie expired: usage-summary response is missing the billing cycle; refresh CURSOR_COOKIE in .env')
+    with open(os.path.join(SCRIPT_DIR, OUTPUT_CURSOR_QUOTA_JSON), 'w') as f:
+        json.dump(body, f, indent=2, ensure_ascii=False)
+    return body
+
+def load_cursor_quota(path: str | None = None) -> list[QuotaSnapshot]:
+    """Load and parse the cached cursor_usage_summary.json, returning [] when absent or malformed."""
+    if path is None:
+        path = os.path.join(SCRIPT_DIR, OUTPUT_CURSOR_QUOTA_JSON)
+    if not os.path.exists(path):
+        return []
+    try:
+        with open(path) as f:
+            body = json.load(f)
+    except (ValueError, OSError):
+        return []
+    return normalize_cursor_quota(body)
+
 def load_glm(path=None):
     if path is None:
         path = os.path.join(SCRIPT_DIR, 'glm.json')
@@ -2182,7 +2261,16 @@ def build_latest_dashboard_payload(days: int = 30, *, no_cost: bool = False, ski
             grok_quota = cast(list[QuotaSnapshot], _grok_usage.export_grok_quota(grok_cookie))
         except Exception as e:
             print(f"Failed to fetch Grok quota: {e}")
-    quotas = glm_quota_to_unified(glm_quota) + ollama_quota + codex_quota + claude_quota + antigravity_quota + grok_quota
+
+    cursor_quota: list[QuotaSnapshot] = []
+    if cursor_cookie:
+        print("Loading Cursor quota from usage-summary API...")
+        try:
+            export_cursor_quota(cursor_cookie)
+        except Exception as e:
+            print(f"Failed to fetch Cursor quota: {e}")
+        cursor_quota = load_cursor_quota()
+    quotas = glm_quota_to_unified(glm_quota) + ollama_quota + codex_quota + claude_quota + antigravity_quota + grok_quota + cursor_quota
 
     print("Loading Claude Code data...")
     start_d = datetime.strptime(start_date, '%Y-%m-%d').date()
