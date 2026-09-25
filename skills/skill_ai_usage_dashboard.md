@@ -205,3 +205,5 @@ If firmware changed and Arduino tooling is available, compile `eink/e1002/e1002.
 - Cursor and GLM exports require private credentials and should be treated as optional.
 - OpenCode archive support depends on a separate `opencode_skill` installation or path.
 - The e-ink firmware is a companion project; Python tests mirror only its pure logic, not hardware behavior.
+- The E1002 panel runs in 1-bit mode: solid colors render black, mid-gray renders white (a full bar looks empty). Only black or white+pattern fills are reliably visible. Read `eink/e1002/README.md` ("Panel Color Behavior") before choosing any fill color.
+- The display service keeps an in-memory payload snapshot; code changes to `auto_usage.py` (labels, quota fields) require a service restart plus a `POST /api/v1/display/update` refresh before the e-ink sees them.

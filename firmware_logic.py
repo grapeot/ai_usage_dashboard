@@ -86,7 +86,8 @@ def provider_color(provider: str) -> str:
         'ollama': 'cyan',
         'antigravity': 'cyan',
         'grok': 'black',
-        'cursor': 'midgrey',
+        # 1-bit panel: mid-gray packs >= 128 and renders white; use black.
+        'cursor': 'black',
     }.get(provider, 'black')
 
 

@@ -37,7 +37,6 @@ TFT_RED = (255, 0, 0)
 TFT_YELLOW = (255, 255, 0)
 TFT_BLUE = (0, 0, 255)
 TFT_CYAN = (0, 255, 255)
-TFT_MIDGREY = (128, 128, 128)
 
 _MAX_DAYS = 30
 _MAX_QUOTAS = 12
@@ -194,7 +193,8 @@ def provider_color(provider: str) -> tuple[int, int, int]:
         "claude": TFT_RED,
         "antigravity": TFT_CYAN,
         "grok": TFT_BLACK,
-        "cursor": TFT_MIDGREY,
+        # 1-bit panel: mid-gray packs >= 128 and renders white; use black.
+        "cursor": TFT_BLACK,
     }.get(provider, TFT_BLACK)
 
 

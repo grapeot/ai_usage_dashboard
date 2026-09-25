@@ -26,7 +26,7 @@ from eink_simulator import (
     TFT_GREEN,
     TFT_CYAN,
     TFT_YELLOW,
-    TFT_MIDGREY,
+    TFT_BLACK,
 )
 
 
@@ -93,7 +93,8 @@ def test_simulator_provider_color_includes_ollama():
     assert provider_color('glm') == TFT_GREEN
     assert provider_color('ollama') == TFT_CYAN
     assert provider_color('codex') == TFT_YELLOW
-    assert provider_color('cursor') == TFT_MIDGREY
+    # 1-bit panel thresholding: mid-gray would render white, so cursor uses black.
+    assert provider_color('cursor') == TFT_BLACK
 
 
 def test_simulator_reset_countdown_label_formats_hours():
