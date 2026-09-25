@@ -137,6 +137,8 @@ If upload is unstable:
 3. Wake the device with a button before uploading.
 4. If it still fails, hold `BOOT` and click Upload.
 
+After editing only header files (e.g. `dashboard_logic.h`), run `arduino-cli compile --clean` before uploading: `arduino-cli upload` may reuse a stale cached build and flash the old binary. esptool's "No changed sectors found" message means the uploaded binary is identical to what is already on the device — if you expected a change, that is the signal to rebuild with `--clean` and verify the binary size/hash changed.
+
 ## Notes
 
 - `secrets.h` contains local Wi-Fi credentials and must not be committed.
