@@ -667,13 +667,12 @@ def normalize_cursor_quota(body: dict[str, object] | None) -> list[QuotaSnapshot
     The /dashboard/spending page shows two bars that both reset at the end of
     the billing cycle: "Cursor models" (Composer + Cursor's own frontier
     models, autoPercentUsed) and "Other models" (other named/frontier models,
-    apiPercentUsed). Verified against the live page on 2026-09-25: the
-    "Cursor models" bar showed 1% (autoPercentUsed 1.201) and "Other models"
-    100% (apiPercentUsed 100). totalPercentUsed is the whole-pool gauge used
-    by the "X% of your included total usage" message, not a bar value. We emit
-    one unified snapshot per bar; the reset time is billingCycleEnd for both.
+    apiPercentUsed), verified against the live page. totalPercentUsed is the
+    whole-pool gauge used by the "X% of your included total usage" message,
+    not a bar value. We emit one unified snapshot per bar; the reset time is
+    billingCycleEnd for both.
     """
-    if not body or body.get('isUnlimited') or not isinstance(body, dict):
+    if not isinstance(body, dict) or not body or body.get('isUnlimited'):
         return []
     individual = body.get('individualUsage')
     plan = individual.get('plan') if isinstance(individual, dict) else None

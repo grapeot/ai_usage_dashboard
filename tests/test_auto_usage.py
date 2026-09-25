@@ -1445,24 +1445,26 @@ def test_export_ollama_quota_caches_settings_page(monkeypatch, tmp_path):
 
 # --- Cursor quota ---
 
+# Synthetic fixture mirroring the cursor.com/api/usage-summary shape.
+# Values are fabricated; never put real usage data in public test files.
 _CURSOR_USAGE_SUMMARY = {
-    'billingCycleStart': '2026-09-16T18:52:21.000Z',
-    'billingCycleEnd': '2026-10-16T18:52:21.000Z',
-    'membershipType': 'ultra',
+    'billingCycleStart': '2026-07-01T08:00:00.000Z',
+    'billingCycleEnd': '2026-08-01T08:00:00.000Z',
+    'membershipType': 'pro',
     'limitType': 'user',
     'isUnlimited': False,
-    'autoModelSelectedDisplayMessage': "You've used 4% of your included total usage",
+    'autoModelSelectedDisplayMessage': "You've used 40% of your included total usage",
     'namedModelSelectedDisplayMessage': "You've used 100% of your included API usage",
     'individualUsage': {
         'plan': {
             'enabled': True,
-            'used': 13611,
-            'limit': 40000,
-            'remaining': 26389,
-            'breakdown': {'included': 13611, 'bonus': 0, 'total': 13611},
-            'autoPercentUsed': 1.201,
+            'used': 4200,
+            'limit': 50000,
+            'remaining': 45800,
+            'breakdown': {'included': 4200, 'bonus': 0, 'total': 4200},
+            'autoPercentUsed': 12.6,
             'apiPercentUsed': 100,
-            'totalPercentUsed': 4.390645161290323,
+            'totalPercentUsed': 40.2,
         },
         'onDemand': {'enabled': False, 'used': 0, 'limit': None, 'remaining': None},
     },
@@ -1476,8 +1478,8 @@ def test_normalize_cursor_quota_maps_cursor_models_and_other_models():
     assert len(snapshots) == 2
     assert snapshots[0]['provider'] == 'cursor'
     assert snapshots[0]['label'] == 'Models'
-    # "Cursor models" bar reads autoPercentUsed (verified against the live page: 1%).
-    assert snapshots[0]['percentage'] == 1
+    # "Cursor models" bar reads autoPercentUsed, not totalPercentUsed.
+    assert snapshots[0]['percentage'] == 13
     assert snapshots[1]['provider'] == 'cursor'
     assert snapshots[1]['label'] == 'Other'
     # "Other models" bar reads apiPercentUsed (verified against the live page: 100%).
@@ -1493,7 +1495,7 @@ def test_normalize_cursor_quota_maps_cursor_models_and_other_models():
 def test_normalize_cursor_quota_resets_to_billing_cycle_end():
     snapshots = normalize_cursor_quota(_CURSOR_USAGE_SUMMARY)
     expected_ms = int(
-        datetime.fromisoformat('2026-10-16T18:52:21+00:00').timestamp() * 1000
+        datetime.fromisoformat('2026-08-01T08:00:00+00:00').timestamp() * 1000
     )
     assert snapshots[0]['next_reset_time_ms'] == expected_ms
     assert snapshots[1]['next_reset_time_ms'] == expected_ms
@@ -1527,6 +1529,9 @@ def test_normalize_cursor_quota_returns_empty_when_plan_disabled():
 def test_normalize_cursor_quota_returns_empty_for_missing_or_malformed_body():
     assert normalize_cursor_quota(None) == []
     assert normalize_cursor_quota({}) == []
+    # Non-dict truthy bodies must not raise (e.g. a cached JSON array).
+    assert normalize_cursor_quota([1, 2]) == []
+    assert normalize_cursor_quota('str') == []
     assert normalize_cursor_quota({'individualUsage': None}) == []
     body = json.loads(json.dumps(_CURSOR_USAGE_SUMMARY))
     body['individualUsage']['plan']['autoPercentUsed'] = 'not-a-number'
