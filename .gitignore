@@ -16,6 +16,7 @@ cursor.csv
 glm.json
 glm_quota.json
 ollama_settings.html
+cursor_usage_summary.json
 token_usage_dashboard.png
 token_usage_epaper.png
 token_usage_eink.json

@@ -25,6 +25,7 @@ from auto_usage import (
     export_claude_code_quota,
     export_codex_quota,
     export_cursor,
+    export_cursor_quota,
     export_ollama_quota,
     format_glm_quota_block,
     format_quotas_block,
@@ -36,6 +37,7 @@ from auto_usage import (
     load_codex,
     load_codex_quota,
     load_cursor,
+    load_cursor_quota,
     load_glm,
     load_glm_quota,
     load_ollama_quota,
@@ -46,6 +48,7 @@ from auto_usage import (
     merge_daily_tokens,
     merge_intervals,
     normalize_codex_rate_limits,
+    normalize_cursor_quota,
     normalize_glm_quota,
     normalize_ollama_quota,
     parse_ccusage_daily_date,
@@ -1438,6 +1441,176 @@ def test_export_ollama_quota_caches_settings_page(monkeypatch, tmp_path):
 
     assert result == settings_html
     assert (tmp_path / 'ollama_settings.html').read_text() == settings_html
+
+
+# --- Cursor quota ---
+
+_CURSOR_USAGE_SUMMARY = {
+    'billingCycleStart': '2026-09-16T18:52:21.000Z',
+    'billingCycleEnd': '2026-10-16T18:52:21.000Z',
+    'membershipType': 'ultra',
+    'limitType': 'user',
+    'isUnlimited': False,
+    'autoModelSelectedDisplayMessage': "You've used 4% of your included total usage",
+    'namedModelSelectedDisplayMessage': "You've used 100% of your included API usage",
+    'individualUsage': {
+        'plan': {
+            'enabled': True,
+            'used': 13611,
+            'limit': 40000,
+            'remaining': 26389,
+            'breakdown': {'included': 13611, 'bonus': 0, 'total': 13611},
+            'autoPercentUsed': 1.201,
+            'apiPercentUsed': 100,
+            'totalPercentUsed': 4.390645161290323,
+        },
+        'onDemand': {'enabled': False, 'used': 0, 'limit': None, 'remaining': None},
+    },
+    'teamUsage': {},
+}
+
+
+def test_normalize_cursor_quota_maps_cursor_models_and_other_models():
+    snapshots = normalize_cursor_quota(_CURSOR_USAGE_SUMMARY)
+
+    assert len(snapshots) == 2
+    assert snapshots[0]['provider'] == 'cursor'
+    assert snapshots[0]['label'] == 'Models'
+    # "Cursor models" bar reads autoPercentUsed (verified against the live page: 1%).
+    assert snapshots[0]['percentage'] == 1
+    assert snapshots[1]['provider'] == 'cursor'
+    assert snapshots[1]['label'] == 'Other'
+    # "Other models" bar reads apiPercentUsed (verified against the live page: 100%).
+    assert snapshots[1]['percentage'] == 100
+    # Both windows reset at the billing cycle end, converted to local time.
+    for snap in snapshots:
+        assert snap['next_reset_time_ms'] is not None
+        iso = snap['next_reset_iso']
+        assert iso is not None
+        assert 'Z' not in iso
+
+
+def test_normalize_cursor_quota_resets_to_billing_cycle_end():
+    snapshots = normalize_cursor_quota(_CURSOR_USAGE_SUMMARY)
+    expected_ms = int(
+        datetime.fromisoformat('2026-10-16T18:52:21+00:00').timestamp() * 1000
+    )
+    assert snapshots[0]['next_reset_time_ms'] == expected_ms
+    assert snapshots[1]['next_reset_time_ms'] == expected_ms
+
+
+def test_normalize_cursor_quota_clamps_percentage_to_range():
+    body = json.loads(json.dumps(_CURSOR_USAGE_SUMMARY))
+    body['individualUsage']['plan']['autoPercentUsed'] = 130.0
+    body['individualUsage']['plan']['apiPercentUsed'] = -5.0
+
+    snapshots = normalize_cursor_quota(body)
+
+    assert snapshots[0]['percentage'] == 100
+    assert snapshots[1]['percentage'] == 0
+
+
+def test_normalize_cursor_quota_returns_empty_when_unlimited():
+    body = json.loads(json.dumps(_CURSOR_USAGE_SUMMARY))
+    body['isUnlimited'] = True
+
+    assert normalize_cursor_quota(body) == []
+
+
+def test_normalize_cursor_quota_returns_empty_when_plan_disabled():
+    body = json.loads(json.dumps(_CURSOR_USAGE_SUMMARY))
+    body['individualUsage']['plan']['enabled'] = False
+
+    assert normalize_cursor_quota(body) == []
+
+
+def test_normalize_cursor_quota_returns_empty_for_missing_or_malformed_body():
+    assert normalize_cursor_quota(None) == []
+    assert normalize_cursor_quota({}) == []
+    assert normalize_cursor_quota({'individualUsage': None}) == []
+    body = json.loads(json.dumps(_CURSOR_USAGE_SUMMARY))
+    body['individualUsage']['plan']['autoPercentUsed'] = 'not-a-number'
+    assert normalize_cursor_quota(body) == []
+
+
+def test_normalize_cursor_quota_handles_missing_billing_cycle():
+    body = json.loads(json.dumps(_CURSOR_USAGE_SUMMARY))
+    del body['billingCycleEnd']
+
+    snapshots = normalize_cursor_quota(body)
+
+    assert len(snapshots) == 2
+    assert snapshots[0]['next_reset_time_ms'] is None
+    assert snapshots[0]['next_reset_iso'] is None
+
+
+def test_load_cursor_quota_reads_cached_file(tmp_path):
+    summary_path = tmp_path / 'cursor_usage_summary.json'
+    summary_path.write_text(json.dumps(_CURSOR_USAGE_SUMMARY))
+
+    snapshots = load_cursor_quota(str(summary_path))
+
+    assert len(snapshots) == 2
+    assert snapshots[0]['label'] == 'Models'
+    assert snapshots[1]['label'] == 'Other'
+
+
+def test_load_cursor_quota_returns_empty_when_file_missing_or_malformed(tmp_path):
+    assert load_cursor_quota(str(tmp_path / 'missing.json')) == []
+    bad = tmp_path / 'bad.json'
+    bad.write_text('{not-json')
+    assert load_cursor_quota(str(bad)) == []
+
+
+def test_export_cursor_quota_rejects_login_page_without_caching(monkeypatch, tmp_path):
+    class FakeResp:
+        def raise_for_status(self):
+            pass
+
+        def json(self):
+            raise ValueError('Expecting value')
+
+    monkeypatch.setattr('auto_usage.requests.get', lambda url, headers=None: FakeResp())
+    monkeypatch.setattr('auto_usage.SCRIPT_DIR', str(tmp_path))
+
+    with pytest.raises(RuntimeError, match='CURSOR_COOKIE'):
+        export_cursor_quota('expired-cookie')
+
+    assert not (tmp_path / 'cursor_usage_summary.json').exists()
+
+
+def test_export_cursor_quota_rejects_response_missing_billing_cycle(monkeypatch, tmp_path):
+    class FakeResp:
+        def raise_for_status(self):
+            pass
+
+        def json(self):
+            return {'unexpected': 'shape'}
+
+    monkeypatch.setattr('auto_usage.requests.get', lambda url, headers=None: FakeResp())
+    monkeypatch.setattr('auto_usage.SCRIPT_DIR', str(tmp_path))
+
+    with pytest.raises(RuntimeError, match='CURSOR_COOKIE'):
+        export_cursor_quota('stale-cookie')
+
+    assert not (tmp_path / 'cursor_usage_summary.json').exists()
+
+
+def test_export_cursor_quota_caches_summary(monkeypatch, tmp_path):
+    class FakeResp:
+        def raise_for_status(self):
+            pass
+
+        def json(self):
+            return _CURSOR_USAGE_SUMMARY
+
+    monkeypatch.setattr('auto_usage.requests.get', lambda url, headers=None: FakeResp())
+    monkeypatch.setattr('auto_usage.SCRIPT_DIR', str(tmp_path))
+
+    result = export_cursor_quota('good-cookie')
+
+    assert result == _CURSOR_USAGE_SUMMARY
+    assert json.loads((tmp_path / 'cursor_usage_summary.json').read_text()) == _CURSOR_USAGE_SUMMARY
 
 
 # --- Claude Code quota ---

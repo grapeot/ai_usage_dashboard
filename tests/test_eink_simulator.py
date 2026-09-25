@@ -26,6 +26,7 @@ from eink_simulator import (
     TFT_GREEN,
     TFT_CYAN,
     TFT_YELLOW,
+    TFT_MIDGREY,
 )
 
 
@@ -54,6 +55,8 @@ def _sample_payload():
             {'provider': 'ollama', 'label': '7d', 'percentage': 48, 'next_reset_time_ms': now_ms + 3*86400*1000},
             {'provider': 'codex', 'label': '5h', 'percentage': 12, 'next_reset_time_ms': now_ms + 4*3600*1000},
             {'provider': 'codex', 'label': '7d', 'percentage': 4, 'next_reset_time_ms': now_ms + 5*86400*1000},
+            {'provider': 'cursor', 'label': 'Models', 'percentage': 1, 'next_reset_time_ms': now_ms + 21*86400*1000},
+            {'provider': 'cursor', 'label': 'Other', 'percentage': 100, 'next_reset_time_ms': now_ms + 21*86400*1000},
         ],
     }
 
@@ -90,6 +93,7 @@ def test_simulator_provider_color_includes_ollama():
     assert provider_color('glm') == TFT_GREEN
     assert provider_color('ollama') == TFT_CYAN
     assert provider_color('codex') == TFT_YELLOW
+    assert provider_color('cursor') == TFT_MIDGREY
 
 
 def test_simulator_reset_countdown_label_formats_hours():
@@ -109,9 +113,12 @@ def test_simulator_reset_countdown_label_formats_days():
 def test_simulator_parse_dashboard_payload_reads_quotas():
     data = parse_dashboard_payload(_sample_payload())
 
-    assert len(data.quotas) == 6
+    assert len(data.quotas) == 8
     assert data.quotas[2].provider == 'ollama'
     assert data.quotas[2].label == '5h'
+    assert data.quotas[6].provider == 'cursor'
+    assert data.quotas[6].label == 'Models'
+    assert data.quotas[7].label == 'Other'
 
 
 def test_simulator_epaper_save(tmp_path):

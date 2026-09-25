@@ -13,7 +13,7 @@ This skill is local-first. It reads data from the user's machine and writes loca
 - Optional private config: `.env`, copied from `.env.example`.
 - Codex and Claude Code: no key required when their default local logs exist.
 - OpenCode: local DB support by default; optional archive support can point `AI_USAGE_OPENCODE_SKILL_PATH` to an `opencode_skill` checkout.
-- Cursor: optional `CURSOR_COOKIE` in `.env`.
+- Cursor: optional `CURSOR_COOKIE` in `.env` (full browser cookie string from cursor.com while logged in). When present, the dashboard exports the usage CSV and also fetches `GET /api/usage-summary` to parse the two monthly quota windows shown on the Cursor spending page into the unified `quotas` array: `Cursor Models` (the "Cursor models" bar = Composer + Cursor's own models, `autoPercentUsed`) and `Cursor Other` (the "Other models" bar = other named/frontier models, `apiPercentUsed`). Both reset at the billing-cycle end (`billingCycleEnd`). Note `totalPercentUsed` is the whole-pool gauge behind the "X% of your included total usage" message, not a bar value. An expired cookie yields a non-JSON login page, which is rejected so the last good cached snapshot stays intact.
 - GLM/Z.ai: optional `GLM_BEARER_TOKEN` in `.env`. When present, the dashboard also fetches the coding-plan quota snapshot (5-hour / weekly token quotas and the monthly web-search/reader/zread quota) and prints it after the token table; the same snapshot is embedded in the JSON payload under `glm_quota`.
 - Ollama: optional `OLLAMA_COOKIE` in `.env` (full browser cookie string from ollama.com/settings). When present, the dashboard fetches the settings HTML and parses the Session (5h) and Weekly usage bars into the unified `quotas` array.
 - Codex: no key required. The dashboard reads `rate_limits` from the local Codex session JSONL.
@@ -63,7 +63,7 @@ It may write local artifacts:
 
 - `token_usage_dashboard.png`: desktop chart, local/private generated output.
 - `token_usage_eink.json`: E1002 display payload, local/private generated output.
-- `usage.json`, `cursor.csv`, `glm.json`, `glm_quota.json`, `ollama_settings.html`: raw provider exports, local/private generated output.
+- `usage.json`, `cursor.csv`, `glm.json`, `glm_quota.json`, `ollama_settings.html`, `cursor_usage_summary.json`: raw provider exports, local/private generated output.
 
 These files are intentionally gitignored.
 
@@ -193,7 +193,7 @@ Use these checks after changes:
 ```bash
 .venv/bin/python -m pytest tests/ -v
 .venv/bin/python -c "import tomllib; tomllib.load(open('pyproject.toml','rb'))"
-git check-ignore .env token_usage_eink.json token_usage_dashboard.png usage.json cursor.csv glm.json glm_quota.json ollama_settings.html update.log tmp/example.txt
+git check-ignore .env token_usage_eink.json token_usage_dashboard.png usage.json cursor.csv glm.json glm_quota.json ollama_settings.html cursor_usage_summary.json update.log tmp/example.txt
 ```
 
 Also run a privacy scan for fixed LAN IPs, personal absolute paths, private deployment hostnames, old workspace paths, and secret-manager references.

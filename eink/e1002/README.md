@@ -72,9 +72,9 @@ The screen is split into two vertical zones:
 
 - Legend in the top-right header (y=12..48): colored 12x12 squares with labels
 - `Quotas` header at y=92
-- One horizontal usage bar per quota window, stacked vertically. Each bar is 14px tall with a filled colored portion (GLM=green, Ollama=cyan, Codex=yellow, Claude=red) and a black outline. Below each bar, one line of text: `<Provider> <label>, reset in Xd Yh` (or `reset in X.Yh` when less than a day remains). The reset countdown is computed from the NTP-synchronized local clock.
-- Labels are compact: `5h` for 5-hour windows, `7d` for weekly windows
-- Provider order: GLM, Ollama, Codex
+- One horizontal usage bar per quota window, stacked vertically. Each bar is 14px tall with a filled colored portion (GLM=green, Ollama=cyan, Codex=yellow, Claude=red, Grok=black, Cursor=mid gray) and a black outline. Below each bar, one line of text: `<Provider> <label>, reset in Xd Yh` (or `reset in X.Yh` when less than a day remains). The reset countdown is computed from the NTP-synchronized local clock.
+- Labels are compact: `5h` for 5-hour windows, `7d` for weekly windows, `Monthly`-style window names otherwise
+- Provider order: GLM, Ollama, Codex, Claude, Antigravity, Grok, Cursor
 - When no quota data is present the panel shows `--`
 
 ## Current Behavior

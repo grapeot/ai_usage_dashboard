@@ -149,6 +149,11 @@ inline uint16_t providerColor(const String& provider) {
   if (provider == "claude") {
     return TFT_RED;
   }
+  if (provider == "cursor") {
+    // Mid gray (565 0x8210); the Cursor stacked-bar segment is white with a
+    // black border, so the quota bar uses a distinct gray fill.
+    return 0x8210;
+  }
   return TFT_BLACK;
 }
 
