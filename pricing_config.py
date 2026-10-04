@@ -1,9 +1,11 @@
 """
 Model pricing config: lookup official API prices by model name, independent of source.
 Reference: docs/rfc.md
-Updated: 2026-09 (full pricing audit 2026-09-15; evidence in workspace tmp/pricing_audit_20260915/;
-2026-09-24: OpenRouter Qwen3.8 27B rates, ollama-cloud / llamacpp / mtplx and
-zai/glm-5.3-flash gaps closed from a 30-day usage audit)
+Updated: 2026-10 (2026-10-04: GPT-6 Sol/Luna, GPT-6.1 Sol, GPT-6 Astra
+ ultrafast, Claude Opus 5.5, Sonnet 5.5 added; 2026-09 full pricing audit
+ 2026-09-15, evidence in workspace tmp/pricing_audit_20260915/;
+ 2026-09-24: OpenRouter Qwen3.8 27B rates, ollama-cloud / llamacpp / mtplx and
+ zai/glm-5.3-flash gaps closed from a 30-day usage audit)
 """
 import re
 # model name -> official price ($/M tokens)
@@ -12,8 +14,15 @@ MODEL_PRICING = {
     "gpt-5.6-sol": {"input": 4.0, "cached": 0.4, "cache_write": 5.0, "output": 20.0},
     "gpt-5.6-terra": {"input": 2.0, "cached": 0.2, "cache_write": 2.5, "output": 12.0},
     "gpt-5.6-luna": {"input": 0.2, "cached": 0.02, "cache_write": 0.25, "output": 1.2},
-    # GPT-6 Astra (standard); fast mode = 2x, billed per-token.
+    # GPT-6 Astra (standard); fast = 2x, ultrafast = 6x (OpenAI pricing page).
     "gpt-6-astra": {"input": 10.0, "cached": 1.0, "cache_write": 12.5, "output": 50.0},
+    "gpt-6-astra-ultrafast": {"input": 60.0, "cached": 6.0, "cache_write": 75.0, "output": 300.0},
+    # GPT-6 Sol / Luna (2026-09-22, 50% below GPT-5.6 promo): Sol $2/$0.20/$10,
+    # Luna $0.10/$0.01/$0.50. Cache writes billed at 1.25x uncached input.
+    "gpt-6-sol": {"input": 2.0, "cached": 0.2, "cache_write": 2.5, "output": 10.0},
+    "gpt-6-luna": {"input": 0.1, "cached": 0.01, "cache_write": 0.125, "output": 0.5},
+    # GPT-6.1 Sol (2026-09-29): $2/$10 like Sol, cached input halved to $0.10.
+    "gpt-6.1-sol": {"input": 2.0, "cached": 0.1, "cache_write": 2.5, "output": 10.0},
     "gpt-5.5": {"input": 5.0, "cached": 0.5, "output": 30.0},
     "gpt-5.4": {"input": 2.5, "cached": 0.25, "output": 15.0},
     "gpt-5.4-mini": {"input": 0.75, "cached": 0.075, "output": 4.5},
@@ -62,11 +71,15 @@ MODEL_PRICING = {
     "claude-sonnet-4.6": {"input": 3.0, "cache_read": 0.3, "cache_write": 3.75, "cache_write_1h": 6.0, "output": 15.0},
     # Anthropic Sonnet 5: $2/$10 launch price is now the long-term standard price.
     "claude-sonnet-5": {"input": 2.0, "cache_read": 0.2, "cache_write": 2.5, "cache_write_1h": 4.0, "output": 10.0},
+    # Sonnet 5.5 (2026-09-28): same list rates as Sonnet 5 ($2/$10), cache read $0.20.
+    "claude-sonnet-5-5": {"input": 2.0, "cache_read": 0.2, "cache_write": 2.5, "cache_write_1h": 4.0, "output": 10.0},
     "claude-opus-4.6": {"input": 5.0, "cache_read": 0.5, "cache_write": 6.25, "cache_write_1h": 10.0, "output": 25.0},
     # Fast mode is a request parameter (speed:"fast"), not a model id; Opus 5/4.8
     # fast rate is 2x standard: $10/$50 (docs.claude.com fast-mode page).
     "claude-opus-fast": {"input": 10.0, "cache_read": 1.0, "cache_write": 12.5, "cache_write_1h": 20.0, "output": 50.0},
     "claude-opus-5": {"input": 5.0, "cache_read": 0.5, "cache_write": 6.25, "cache_write_1h": 10.0, "output": 25.0},
+    # Opus 5.5 (2026-09-22): 20% below Opus 5; $4/$20, cache read down 60% to $0.20.
+    "claude-opus-5-5": {"input": 4.0, "cache_read": 0.2, "cache_write": 5.0, "cache_write_1h": 8.0, "output": 20.0},
     # Cursor Composer 2.5 (Cursor official blog): no published cache discount.
     # Standard $0.50/$2.50; Fast $3.00/$15.00.
     "cursor-composer-2.5": {"input": 0.5, "output": 2.5},
@@ -154,11 +167,15 @@ def get_pricing(model_id: str) -> Pricing | None:
         return None
     # Strip common provider prefixes from OpenRouter / OpenCode-style ids.
     # ollama-cloud serves third-party models (Z.ai, DeepSeek, ...) at their
-    # official rates, so the bare model id prices correctly.
-    if "/" in model_lower:
+    # official rates, so the bare model id prices correctly. Loop so ids like
+    # "deepseek-official/deepseek-flash" and "qwen38/RadixArk/Qwen3.8-27B-NVFP4"
+    # collapse to the billable model name.
+    while "/" in model_lower:
         prefix, remainder = model_lower.split("/", 1)
-        if prefix in {"xai", "x-ai", "openrouter", "opencode", "ollama-cloud"} and remainder:
+        if prefix in {"xai", "x-ai", "openrouter", "opencode", "ollama-cloud", "deepseek-official"} and remainder:
             model_lower = remainder
+            continue
+        break
     # direct match
     if model_lower in MODEL_PRICING:
         return MODEL_PRICING[model_lower].copy()
@@ -174,10 +191,12 @@ def get_pricing(model_id: str) -> Pricing | None:
     # -pro / -low / -medium / -high suffixes are reasoning parameters, not
     # separate billing models, so they price at the base model rate.
     if model_lower.startswith("gpt-"):
-        base = re.sub(r"-(fast|pro|low|medium|high)$", "", model_lower)
+        base = re.sub(r"-(fast|ultrafast|pro|low|medium|high)$", "", model_lower)
         if base != model_lower:
             base_pricing = MODEL_PRICING.get(base)
             if base_pricing:
+                if model_lower.endswith("-ultrafast"):
+                    return {k: v * 6.0 for k, v in base_pricing.items()}
                 if model_lower.endswith("-fast"):
                     return {k: v * 2.0 for k, v in base_pricing.items()}
                 return base_pricing.copy()
@@ -192,16 +211,20 @@ def get_pricing(model_id: str) -> Pricing | None:
             return MODEL_PRICING["gemini-3-pro"].copy()
     # Claude variants
     if "opus" in model_lower and "claude" in model_lower:
-        # Opus 5 / 4.8 / 4.6 share the $5/$25 base price; fast mode (request
-        # parameter) bills at 2x standard per Anthropic's fast-mode page.
+        # Opus 5.5 is its own (cheaper) tier; Opus 5 / 4.8 / 4.6 share $5/$25.
+        # Fast mode (request parameter) bills at 2x standard.
         if "fast" in model_lower:
             return MODEL_PRICING["claude-opus-fast"].copy()
+        if "5-5" in model_lower or "5.5" in model_lower:
+            return MODEL_PRICING["claude-opus-5-5"].copy()
         return MODEL_PRICING["claude-opus-5"].copy()
     if "fable" in model_lower and "claude" in model_lower:
         if "5-1" in model_lower or "5.1" in model_lower:
             return MODEL_PRICING["claude-fable-5-1"].copy()
         return MODEL_PRICING["claude-fable-5"].copy()
     if "sonnet" in model_lower and "claude" in model_lower:
+        if "sonnet-5-5" in model_lower or "sonnet-5.5" in model_lower:
+            return MODEL_PRICING["claude-sonnet-5-5"].copy()
         if "sonnet-5" in model_lower:
             return MODEL_PRICING["claude-sonnet-5"].copy()
         return MODEL_PRICING["claude-sonnet-4.6"].copy()
@@ -244,11 +267,14 @@ def get_pricing(model_id: str) -> Pricing | None:
     if "gemini-3.6-flash" in model_lower:
         return MODEL_PRICING["gemini-3.6-flash"].copy()
     # Local inference runtimes (LM Studio, llama.cpp, MTPLX packs) bill $0.
+    # NVFP4 local quantized builds (e.g. RadixArk/Qwen3.8-27B-NVFP4) are local too.
     if (
         model_lower.startswith("lmstudio/")
         or model_lower.startswith("llamacpp/")
         or model_lower.startswith("mtplx/")
+        or model_lower.startswith("qwen38/")
         or "-mlx" in model_lower
+        or "-nvfp4" in model_lower
     ):
         return MODEL_PRICING["local-free"].copy()
     if model_lower.startswith("deepseek-v4-flash"):
