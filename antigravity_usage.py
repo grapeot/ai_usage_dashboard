@@ -687,7 +687,11 @@ def calculate_cost(
             pricing = pricing_lookup(model_id) or pricing_lookup(
                 f'antigravity-{model_id}'
             )
-            if not pricing and 'gemini' in (model_id or '').lower():
+            # Unresolved Antigravity ids (gemini-* variants, unknown
+            # model_placeholder_*) classify as Gemini; price them at the
+            # gemini-3-flash fallback rather than dropping to $0.
+            lowered = (model_id or '').lower()
+            if not pricing and ('gemini' in lowered or 'placeholder' in lowered):
                 pricing = pricing_lookup('gemini-3-flash')
             if not pricing:
                 continue

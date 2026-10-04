@@ -14,6 +14,11 @@ class TestGetPricing:
         assert get_pricing("gpt-5.6-terra") == {"input": 2.0, "cached": 0.2, "cache_write": 2.5, "output": 12.0}
         assert get_pricing("gpt-5.6-luna") == {"input": 0.2, "cached": 0.02, "cache_write": 0.25, "output": 1.2}
         assert get_pricing("gpt-6-astra") == {"input": 10.0, "cached": 1.0, "cache_write": 12.5, "output": 50.0}
+        # GPT-6 Sol / Luna (2026-09-22): 50% below GPT-5.6 promo.
+        assert get_pricing("gpt-6-sol") == {"input": 2.0, "cached": 0.2, "cache_write": 2.5, "output": 10.0}
+        assert get_pricing("gpt-6-luna") == {"input": 0.1, "cached": 0.01, "cache_write": 0.125, "output": 0.5}
+        # GPT-6.1 Sol (2026-09-29): Sol rates but cached input halved to $0.10.
+        assert get_pricing("gpt-6.1-sol") == {"input": 2.0, "cached": 0.1, "cache_write": 2.5, "output": 10.0}
         assert get_pricing("gpt-5.5") == {"input": 5.0, "cached": 0.5, "output": 30.0}
         assert get_pricing("gpt-5.4") == {"input": 2.5, "cached": 0.25, "output": 15.0}
         assert get_pricing("gpt-5.4-mini") == {"input": 0.75, "cached": 0.075, "output": 4.5}
@@ -95,6 +100,13 @@ class TestGetPricing:
         # Generic opus fallback still resolves to 4.6 when no version digit present.
         assert get_pricing("claude-opus-unknown") == get_pricing("claude-opus-4.6")
 
+    def test_claude_opus_5_5(self):
+        # Opus 5.5 (2026-09-22): $4/$20, cache read down to $0.20.
+        assert get_pricing("claude-opus-5-5") == {"input": 4.0, "cache_read": 0.2, "cache_write": 5.0, "cache_write_1h": 8.0, "output": 20.0}
+        assert get_pricing("claude-opus-5.5") == get_pricing("claude-opus-5-5")
+        assert get_pricing("claude-opus-5-5-thinking-high") == get_pricing("claude-opus-5-5")
+        assert get_pricing("claude-opus-5-5") != get_pricing("claude-opus-5")
+
     def test_cursor_composer(self):
         # Standard $0.50/$2.50; Fast $3.00/$15.00 (Cursor official blog).
         assert get_pricing("cursor-composer-2.5") == {"input": 0.5, "output": 2.5}
@@ -112,11 +124,21 @@ class TestGetPricing:
         assert get_pricing("claude-sonnet-5") == {"input": 2.0, "cache_read": 0.2, "cache_write": 2.5, "cache_write_1h": 4.0, "output": 10.0}
         assert get_pricing("claude-sonnet-5-thinking") == get_pricing("claude-sonnet-5")
 
+    def test_claude_sonnet_5_5(self):
+        # Sonnet 5.5 (2026-09-28): same list rates as Sonnet 5.
+        assert get_pricing("claude-sonnet-5-5") == {"input": 2.0, "cache_read": 0.2, "cache_write": 2.5, "cache_write_1h": 4.0, "output": 10.0}
+        assert get_pricing("claude-sonnet-5.5") == get_pricing("claude-sonnet-5-5")
+        assert get_pricing("claude-sonnet-5-5-thinking") == get_pricing("claude-sonnet-5-5")
+
     def test_openai_fast_and_reasoning_suffixes(self):
         # Fast mode = 2x standard for GPT models (per-token premium).
         assert get_pricing("gpt-5.6-sol-fast") == {"input": 8.0, "cached": 0.8, "cache_write": 10.0, "output": 40.0}
         assert get_pricing("gpt-5.6-terra-fast") == {"input": 4.0, "cached": 0.4, "cache_write": 5.0, "output": 24.0}
         assert get_pricing("gpt-6-astra-fast") == {"input": 20.0, "cached": 2.0, "cache_write": 25.0, "output": 100.0}
+        # Ultrafast is Astra-only, 6x standard.
+        assert get_pricing("gpt-6-astra-ultrafast") == {"input": 60.0, "cached": 6.0, "cache_write": 75.0, "output": 300.0}
+        assert get_pricing("gpt-6-sol-fast") == {"input": 4.0, "cached": 0.4, "cache_write": 5.0, "output": 20.0}
+        assert get_pricing("gpt-6.1-sol-fast") == {"input": 4.0, "cached": 0.2, "cache_write": 5.0, "output": 20.0}
         # pro/low/medium/high are reasoning parameters, priced at base rate.
         assert get_pricing("gpt-5.6-sol-pro") == get_pricing("gpt-5.6-sol")
         assert get_pricing("gpt-6-astra-low") == get_pricing("gpt-6-astra")
@@ -149,12 +171,17 @@ class TestGetPricing:
         # llama.cpp / MTPLX packs are local inference runtimes.
         assert get_pricing("llamacpp/qwen3.8-flash-next") == free
         assert get_pricing("mtplx/flash-next-mplx-pack") == free
+        # Local NVFP4 quantized builds (SGLang/RadixArk) bill $0.
+        assert get_pricing("qwen38/RadixArk/Qwen3.8-27B-NVFP4") == free
 
     def test_ollama_cloud_prefix(self):
         # Ollama Cloud serves third-party models at their official rates.
         assert get_pricing("ollama-cloud/glm-5.3-flash") == get_pricing("glm-5.3-flash")
         assert get_pricing("ollama-cloud/glm-5.2") == get_pricing("glm-5.2")
         assert get_pricing("zai/glm-5.3-flash") == get_pricing("glm-5.3-flash")
+        # DSH deepseek-official provider prefix collapses to the billable model.
+        assert get_pricing("deepseek-official/deepseek-flash") == get_pricing("deepseek-v4-flash")
+        assert get_pricing("deepseek-official/deepseek-v4.1-flash-expires-on-0910") == get_pricing("deepseek-v4-flash")
 
     def test_gemini_31_pro_alias(self):
         assert get_pricing("gemini-3.1-pro") == get_pricing("gemini-3.1-pro-preview")
