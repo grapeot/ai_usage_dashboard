@@ -14,7 +14,7 @@ This skill is local-first. It reads data from the user's machine and writes loca
 - Codex and Claude Code: no key required when their default local logs exist.
 - OpenCode: local DB support by default; optional archive support can point `AI_USAGE_OPENCODE_SKILL_PATH` to an `opencode_skill` checkout.
 - Cursor: optional `CURSOR_COOKIE` in `.env` (full browser cookie string from cursor.com while logged in). When present, the dashboard exports the usage CSV and also fetches `GET /api/usage-summary` to parse the two monthly quota windows shown on the Cursor spending page into the unified `quotas` array: `Cursor Models` (the "Cursor models" bar = Composer + Cursor's own models, `autoPercentUsed`) and `Cursor Other` (the "Other models" bar = other named/frontier models, `apiPercentUsed`). Both reset at the billing-cycle end (`billingCycleEnd`). Note `totalPercentUsed` is the whole-pool gauge behind the "X% of your included total usage" message, not a bar value. An expired cookie yields a non-JSON login page, which is rejected so the last good cached snapshot stays intact.
-- GLM/Z.ai: optional `GLM_BEARER_TOKEN` in `.env`. When present, the dashboard also fetches the coding-plan quota snapshot (5-hour / weekly token quotas and the monthly web-search/reader/zread quota) and prints it after the token table; the same snapshot is embedded in the JSON payload under `glm_quota`.
+- GLM/Z.ai: optional `GLM_BEARER_TOKEN` in `.env`. When present, the dashboard fetches the coding-plan **quota** snapshot (5-hour / weekly token quotas and the monthly web-search/reader/zread quota) and prints it after the token table; the same snapshot is embedded in the JSON payload under `glm_quota`. GLM **usage** comes from the local OpenCode database, not the cloud API.
 - Ollama: optional `OLLAMA_COOKIE` in `.env` (full browser cookie string from ollama.com/settings). When present, the dashboard fetches the settings HTML and parses the Session (5h) and Weekly usage bars into the unified `quotas` array.
 - Codex: no key required. Usage is read from the local rollout JSONL under `~/.codex/sessions` (timestamp-precise, per-turn input/cache/output split); the same files provide `rate_limits` for quota.
 
@@ -227,7 +227,7 @@ If firmware changed and Arduino tooling is available, compile `eink/e1002/e1002.
 
 ## Known Caveats
 
-- Cursor and GLM exports require private credentials and should be treated as optional.
+- Cursor exports require a private credential and should be treated as optional.
 - OpenCode archive support depends on a separate `opencode_skill` installation or path.
 - The e-ink firmware is a companion project; Python tests mirror only its pure logic, not hardware behavior.
 - The E1002 panel runs in 1-bit mode: solid colors render black, mid-gray renders white (a full bar looks empty). Only black or white+pattern fills are reliably visible. Read `eink/e1002/README.md` ("Panel Color Behavior") before choosing any fill color.

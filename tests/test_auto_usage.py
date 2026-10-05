@@ -39,7 +39,6 @@ from auto_usage import (
     load_codex_quota,
     load_cursor,
     load_cursor_quota,
-    load_glm,
     load_glm_quota,
     load_ollama_quota,
     load_opencode,
@@ -135,16 +134,14 @@ def test_classify_opencode_bucket_ollama_cloud_qwen_model_maps_to_qwen():
     assert classify_opencode_bucket('ollama-cloud', 'qwen3.5:397b') == 'qwen'
 
 
-def test_classify_opencode_bucket_glm_provider_is_excluded_by_default():
-    assert classify_opencode_bucket('zai-coding-plan', 'glm-5') is None
+def test_classify_opencode_bucket_zai_glm_maps_to_glm_opencode():
+    # zai-coding-plan GLM is local usage now (cloud usage API retired).
+    assert classify_opencode_bucket('zai-coding-plan', 'glm-5') == 'glm_opencode'
+    assert classify_opencode_bucket('zai-coding-plan', 'glm-5.3') == 'glm_opencode'
 
 
 def test_classify_opencode_bucket_ollama_cloud_glm_model_maps_to_glm_opencode():
     assert classify_opencode_bucket('ollama-cloud', 'glm-5.2') == 'glm_opencode'
-
-
-def test_classify_opencode_bucket_ollama_cloud_glm_model_not_excluded_when_flag_off():
-    assert classify_opencode_bucket('ollama-cloud', 'glm-5.2', exclude_glm=False) == 'glm_opencode'
 
 
 def test_classify_opencode_bucket_custom_provider_glm_model_maps_to_glm_opencode():
@@ -258,7 +255,8 @@ def test_build_opencode_turn_intervals_uses_user_to_last_assistant():
     ]
 
 
-def test_build_opencode_turn_intervals_skips_excluded_glm_assistant():
+def test_build_opencode_turn_intervals_includes_zai_glm_assistant():
+    # zai GLM is local usage now, so its turns are counted like any other.
     messages: list[OpencodeTurnMessage] = [
         {'session_id': 'ses_1', 'time': datetime(2026, 3, 12, 10, 0), 'role': 'user', 'provider_id': '', 'model_id': ''},
         {'session_id': 'ses_1', 'time': datetime(2026, 3, 12, 10, 5), 'role': 'assistant', 'provider_id': 'zai-coding-plan', 'model_id': 'glm-5'},
@@ -266,6 +264,7 @@ def test_build_opencode_turn_intervals_skips_excluded_glm_assistant():
         {'session_id': 'ses_1', 'time': datetime(2026, 3, 12, 10, 12), 'role': 'assistant', 'provider_id': 'anthropic', 'model_id': 'claude-sonnet-4.6'},
     ]
     assert build_opencode_turn_intervals(messages) == [
+        (datetime(2026, 3, 12, 10, 0), datetime(2026, 3, 12, 10, 5)),
         (datetime(2026, 3, 12, 10, 10), datetime(2026, 3, 12, 10, 12)),
     ]
 
@@ -541,42 +540,6 @@ def test_export_cursor_writes_csv_from_filtered_usage_events(monkeypatch, tmp_pa
         'pageSize': 100,
     }
     assert load_cursor(csv_path) == {date(2026, 3, 20): 135}
-
-
-def test_load_glm_accepts_date_only_and_minute_precision_timestamps(tmp_path):
-    glm_path = tmp_path / 'glm.json'
-    glm_path.write_text(json.dumps({
-        'success': True,
-        'data': {
-            'x_time': ['2026-03-10', '2026-03-10 12:30', '2026-03-11'],
-            'tokensUsage': [100, 50, 25],
-        }
-    }))
-
-    daily = load_glm(glm_path)
-
-    assert daily == {
-        date(2026, 3, 10): 150,
-        date(2026, 3, 11): 25,
-    }
-
-
-def test_load_glm_skips_empty_or_invalid_timestamps(tmp_path):
-    glm_path = tmp_path / 'glm.json'
-    glm_path.write_text(json.dumps({
-        'success': True,
-        'data': {
-            'x_time': ['2026-03-10', None, '', 'not-a-time', '2026-03-11 08:45'],
-            'tokensUsage': [100, 30, 40, 50, 25],
-        }
-    }))
-
-    daily = load_glm(glm_path)
-
-    assert daily == {
-        date(2026, 3, 10): 100,
-        date(2026, 3, 11): 25,
-    }
 
 
 def test_load_claude_code_counts_main_and_subagent_usage_once(tmp_path):
