@@ -42,6 +42,11 @@ The current version uses each tool's default local data directory. If you need c
 
 # Skip cost estimation
 .venv/bin/python auto_usage.py -d 7 --no-cost
+
+# Exact time window (local event timestamps), e.g. align a quota window
+.venv/bin/python auto_usage.py --from 2026-10-05T09:00 --to 2026-10-05T18:00
+# A bare date means that whole day; --provider filters to one bucket
+.venv/bin/python auto_usage.py --from 2026-10-05 --provider deepseek
 ```
 
 Outputs:

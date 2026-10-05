@@ -442,6 +442,9 @@ def parse_args():
     parser.add_argument('-s', '--since', type=str, help='Start date (YYYYMMDD or YYYY-MM-DD)')
     parser.add_argument('--no-cost', action='store_true', help='Skip USD cost estimation')
     parser.add_argument('--skip-desktop-chart', action='store_true', help='Skip the desktop PNG chart; output text and JSON only')
+    parser.add_argument('--from', dest='from_ts', type=str, help='Window start (ISO datetime or YYYY-MM-DD) for exact-range aggregation')
+    parser.add_argument('--to', dest='to_ts', type=str, help='Window end, exclusive (ISO datetime or YYYY-MM-DD) for exact-range aggregation')
+    parser.add_argument('--provider', type=str, help='Restrict the exact-range aggregation to one provider bucket (e.g. deepseek)')
     return parser.parse_args()
 
 def export_codex(start_date):
@@ -2544,6 +2547,21 @@ def build_model_breakdown(days: int = 30, *, include_daily: bool = True) -> dict
 
 def main():
     args = parse_args()
+
+    # Exact-range mode: aggregate over [--from, --to) using local event
+    # timestamps, instead of the calendar-day dashboard.
+    if args.from_ts or args.to_ts:
+        import window_usage as _window_usage
+        from_ts = args.from_ts or args.to_ts
+        to_ts = args.to_ts or args.from_ts
+        start = _window_usage.parse_bound(from_ts)
+        end = _window_usage.parse_bound(to_ts)
+        if end == start:  # a bare --from date means "that whole day"
+            end = start + timedelta(days=1)
+        totals = _window_usage.aggregate(start, end, provider=args.provider)
+        print(_window_usage.format_report(start, end, totals))
+        return
+
     if args.since:
         s = args.since.replace('-', '')
         start = datetime.strptime(s, '%Y%m%d')
