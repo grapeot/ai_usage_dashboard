@@ -32,10 +32,6 @@ from pricing_config import get_pricing, calc_cost_from_parts
 
 plt.rcParams['axes.unicode_minus'] = False
 
-# Assumed GLM input/output split when the API only returns total tokens.
-GLM_INPUT_RATIO = 0.7
-GLM_OUTPUT_RATIO = 0.3
-
 # Separate fonts keep desktop charts readable across platforms.
 # Fall back to matplotlib defaults if the preferred fonts are unavailable.
 FONT_ZH = FontProperties(family=['STHeiti', 'Heiti TC', 'PingFang HK', 'Kaiti SC', 'Songti SC', 'Arial Unicode MS'])
@@ -50,11 +46,9 @@ CLAUDE_PROJECT_DIRS = [
     Path.home() / '.config' / 'claude' / 'projects',
 ]
 
-GLM_PROVIDERS = ('zai-coding-plan', 'zai-coding-plan/glm-4.7')
-# GLM models routed through non-Z.ai providers (e.g. ollama-cloud/glm-5.2)
-# are counted in the OpenCode GLM bucket because the Z.ai usage API does not
-# see them. Only zai-coding-plan GLM is excluded to avoid double-counting
-# against the GLM/Z.ai usage API totals.
+# GLM models (any provider route) are counted in the OpenCode GLM bucket. The
+# Z.ai cloud usage API is retired — it is a quota source, not a usage source —
+# so local OpenCode usage is the sole GLM usage source and nothing is excluded.
 GLM_MODEL_PREFIXES = ('glm-',)
 
 # GLM / Z.ai coding-plan quota endpoint. The web dashboard calls
@@ -208,12 +202,12 @@ def classify_model_bucket(provider_id: str, model_id: str, *, include_glm: bool 
     return 'opencode_other'
 
 
-def classify_opencode_bucket(provider_id: str, model_id: str, exclude_glm: bool = True) -> str | None:
-    provider_lower = (provider_id or '').lower()
-    model_lower = (model_id or '').lower()
+def classify_opencode_bucket(provider_id: str, model_id: str) -> str | None:
+    """Classify an OpenCode (provider, model) into a display bucket.
 
-    if exclude_glm and (provider_lower in GLM_PROVIDERS or model_lower.startswith('zai-coding-plan/')):
-        return None
+    All routes are classified (including zai-coding-plan GLM): the Z.ai cloud
+    usage API is retired, so local OpenCode usage is the sole GLM usage source.
+    """
     return classify_model_bucket(provider_id, model_id)
 
 
@@ -576,60 +570,6 @@ def export_cursor(cookie_str, start_ts, end_ts):
         writer.writerows(rows)
     return csv_path
 
-def export_glm(bearer_token, start_date, end_date):
-    """Export GLM usage data, splitting into monthly chunks to avoid API limits."""
-    start_dt = datetime.strptime(start_date, '%Y-%m-%d').date()
-    end_dt = datetime.strptime(end_date, '%Y-%m-%d').date()
-
-    # Split into ~30-day chunks
-    chunks: list[tuple[str, str]] = []
-    current = start_dt
-    while current <= end_dt:
-        chunk_end = min(current + timedelta(days=29), end_dt)
-        chunks.append((current.isoformat(), chunk_end.isoformat()))
-        current = chunk_end + timedelta(days=1)
-
-    merged_x_time: list[str] = []
-    merged_tokens: list[int | None] = []
-
-    headers = {
-        'Authorization': f'Bearer {bearer_token}',
-        'User-Agent': 'Mozilla/5.0',
-    }
-
-    for chunk_start, chunk_end in chunks:
-        url = f'https://api.z.ai/api/monitor/usage/model-usage?startTime={chunk_start}+00:00:00&endTime={chunk_end}+23:59:59'
-        resp = requests.get(url, headers=headers)
-        resp.raise_for_status()
-
-        body = resp.json()
-        if not body.get('success', False) or 'data' not in body:
-            print(f"  GLM API warning for {chunk_start}..{chunk_end}: {body.get('msg', 'unknown error')}")
-            continue
-
-        chunk_data = body['data']
-        chunk_times = chunk_data.get('x_time', [])
-        chunk_tokens = chunk_data.get('tokensUsage', [])
-
-        # Deduplicate: skip first entry if it overlaps with previous chunk's last date
-        if merged_x_time and chunk_times:
-            last_merged_date = merged_x_time[-1].split(' ')[0]
-            first_chunk_date = chunk_times[0].split(' ')[0]
-            if last_merged_date == first_chunk_date:
-                chunk_times = chunk_times[1:]
-                chunk_tokens = chunk_tokens[1:]
-
-        merged_x_time.extend(chunk_times)
-        merged_tokens.extend(chunk_tokens)
-
-    result = {'code': 200, 'msg': 'OK', 'success': True,
-              'data': {'x_time': merged_x_time, 'tokensUsage': merged_tokens}}
-
-    json_path = os.path.join(SCRIPT_DIR, 'glm.json')
-    with open(json_path, 'w') as f:
-        json.dump(result, f, indent=2)
-    return result
-
 def load_codex(path=None, start_date=None, end_date=None):
     """Codex daily total tokens.
 
@@ -746,33 +686,12 @@ def load_cursor_quota(path: str | None = None) -> list[QuotaSnapshot]:
         return []
     return normalize_cursor_quota(body)
 
-def load_glm(path=None):
-    if path is None:
-        path = os.path.join(SCRIPT_DIR, 'glm.json')
-    if not os.path.exists(path):
-        return {}
-    with open(path) as f:
-        data = json.load(f)
-    if not data.get('success', False) or 'data' not in data:
-        return {}
-    daily = defaultdict(int)
-    for ts, tokens in zip(data['data']['x_time'], data['data']['tokensUsage']):
-        if tokens is None or ts in (None, ''):
-            continue
-        try:
-            dt = datetime.fromisoformat(str(ts).replace(' ', 'T'))
-        except ValueError:
-            continue
-        daily[dt.date()] += tokens
-    return dict(daily)
-
-
 def export_glm_quota(bearer_token: str) -> dict[str, object]:
     """Fetch the current Z.ai coding-plan quota snapshot and write glm_quota.json.
 
     The quota endpoint takes no query parameters; the bearer token identifies
-    the plan. The response is cached verbatim to glm_quota.json next to glm.json
-    so offline runs and tests can reuse it.
+    the plan. The response is cached verbatim to glm_quota.json so offline runs
+    and tests can reuse it.
     """
     headers = {
         'Authorization': f'Bearer {bearer_token}',
@@ -1406,7 +1325,7 @@ def empty_opencode_totals() -> dict[str, DailyTokens]:
     }
 
 
-def load_opencode_from_db(exclude_glm: bool = True, start_ts: int | None = None, end_ts: int | None = None) -> dict[str, DailyTokens]:
+def load_opencode_from_db(start_ts: int | None = None, end_ts: int | None = None) -> dict[str, DailyTokens]:
     totals = {
         'anthropic': defaultdict(int),
         'gpt_opencode': defaultdict(int),
@@ -1437,7 +1356,7 @@ def load_opencode_from_db(exclude_glm: bool = True, start_ts: int | None = None,
                 msg = json.loads(data_str)
             except json.JSONDecodeError:
                 continue
-            bucket = classify_opencode_bucket(msg.get('providerID', ''), msg.get('modelID', ''), exclude_glm=exclude_glm)
+            bucket = classify_opencode_bucket(msg.get('providerID', ''), msg.get('modelID', ''))
             if bucket is None:
                 continue
             tokens = msg.get('tokens', {})
@@ -1459,14 +1378,14 @@ def load_opencode_from_db(exclude_glm: bool = True, start_ts: int | None = None,
     return {key: dict(value) for key, value in totals.items()}
 
 
-def load_opencode(exclude_glm: bool = True, start_ts: int | None = None, end_ts: int | None = None):
+def load_opencode(start_ts: int | None = None, end_ts: int | None = None):
     """Load OpenCode token usage, using opencode_skill archive support when available."""
     configure_opencode_skill_path()
     try:
         ocs_query = importlib.import_module('opencode_skill.query')
     except ImportError as e:
         print(f"opencode_skill not importable: {e}. Falling back to the main local OpenCode DB.", file=sys.stderr)
-        return load_opencode_from_db(exclude_glm=exclude_glm, start_ts=start_ts, end_ts=end_ts)
+        return load_opencode_from_db(start_ts=start_ts, end_ts=end_ts)
 
     totals = {
         'anthropic': defaultdict(int),
@@ -1479,7 +1398,7 @@ def load_opencode(exclude_glm: bool = True, start_ts: int | None = None, end_ts:
         'opencode_other': defaultdict(int),
     }
     for m in ocs_query.iter_assistant_messages(since_ms=start_ts, until_ms=end_ts, archive_dbs=_opencode_extra_dbs()):
-        bucket = classify_opencode_bucket(m.provider or '', m.model or '', exclude_glm=exclude_glm)
+        bucket = classify_opencode_bucket(m.provider or '', m.model or '')
         if bucket is None:
             continue
         total = m.tokens_input + m.tokens_output + m.tokens_reasoning + m.tokens_cache_read + m.tokens_cache_write
@@ -1490,7 +1409,7 @@ def load_opencode(exclude_glm: bool = True, start_ts: int | None = None, end_ts:
     return {key: dict(value) for key, value in totals.items()}
 
 
-def load_opencode_detailed(exclude_glm: bool = True, start_ts: int | None = None, end_ts: int | None = None):
+def load_opencode_detailed(start_ts: int | None = None, end_ts: int | None = None):
     """
     Load per-model token breakdown for cost calculation.
     Returns: {date: {model_id: {input, output, cache_read, cache_write}}}
@@ -1505,7 +1424,7 @@ def load_opencode_detailed(exclude_glm: bool = True, start_ts: int | None = None
     if ocs_query is not None:
         for m in ocs_query.iter_assistant_messages(since_ms=start_ts, until_ms=end_ts, archive_dbs=_opencode_extra_dbs()):
             model_id = m.model or 'unknown'
-            if classify_opencode_bucket(m.provider or '', model_id, exclude_glm=exclude_glm) is None:
+            if classify_opencode_bucket(m.provider or '', model_id) is None:
                 continue
             total = m.tokens_input + m.tokens_output + m.tokens_reasoning + m.tokens_cache_read + m.tokens_cache_write
             if total <= 0:
@@ -1537,7 +1456,7 @@ def load_opencode_detailed(exclude_glm: bool = True, start_ts: int | None = None
                 msg = json.loads(data_str)
                 provider_id = msg.get('providerID', '')
                 model_id = msg.get('modelID', '') or 'unknown'
-                if classify_opencode_bucket(provider_id, model_id, exclude_glm=exclude_glm) is None:
+                if classify_opencode_bucket(provider_id, model_id) is None:
                     continue
                 tokens = msg.get('tokens', {})
                 inp = tokens.get('input', 0)
@@ -1794,14 +1713,14 @@ def merge_intervals(intervals: list[TimeInterval]) -> list[TimeInterval]:
     return merged
 
 
-def build_opencode_turn_intervals(messages: list[OpencodeTurnMessage], exclude_glm: bool = True) -> list[TimeInterval]:
+def build_opencode_turn_intervals(messages: list[OpencodeTurnMessage]) -> list[TimeInterval]:
     by_session: dict[str, list[OpencodeTurnMessage]] = defaultdict(list)
     for message in messages:
         role = message.get('role')
         if role not in {'user', 'assistant'}:
             continue
         if role == 'assistant':
-            if classify_opencode_bucket(message.get('provider_id', ''), message.get('model_id', ''), exclude_glm=exclude_glm) is None:
+            if classify_opencode_bucket(message.get('provider_id', ''), message.get('model_id', '')) is None:
                 continue
         by_session[message['session_id']].append(message)
 
@@ -1826,7 +1745,7 @@ def build_opencode_turn_intervals(messages: list[OpencodeTurnMessage], exclude_g
     return intervals
 
 
-def load_opencode_turn_intervals(exclude_glm: bool = True, start_ts: int | None = None, end_ts: int | None = None) -> list[TimeInterval]:
+def load_opencode_turn_intervals(start_ts: int | None = None, end_ts: int | None = None) -> list[TimeInterval]:
     if not OPENCODE_DB.exists():
         return []
 
@@ -1864,7 +1783,7 @@ def load_opencode_turn_intervals(exclude_glm: bool = True, start_ts: int | None 
     except sqlite3.Error:
         return []
 
-    return build_opencode_turn_intervals(messages, exclude_glm=exclude_glm)
+    return build_opencode_turn_intervals(messages)
 
 
 def build_codex_turn_intervals(events: list[CodexTurnEvent]) -> list[TimeInterval]:
@@ -1984,15 +1903,6 @@ def calc_codex_cost(usage_path=None, start_date=None, end_date=None) -> DailyCos
     return result
 
 
-def calc_glm_cost(glm_daily: DailyTokens) -> DailyCosts:
-    """GLM cost using glm-5 default, total × (0.7×input + 0.3×output) assumption."""
-    p = get_pricing('glm-5')
-    if not p:
-        return {d: 0.0 for d in glm_daily}
-    avg_per_token = (GLM_INPUT_RATIO * p['input'] + GLM_OUTPUT_RATIO * p['output']) / 1_000_000
-    return {d: total * avg_per_token for d, total in glm_daily.items()}
-
-
 def calc_opencode_cost(detailed: DailyModelTokens) -> DailyCosts:
     """OpenCode cost from per-model breakdown. Returns {date: cost_usd}."""
     result = defaultdict(float)
@@ -2027,7 +1937,7 @@ def calc_claude_code_cost(detailed: DailyModelTokens) -> DailyCosts:
     return dict(result)
 
 
-def compute_daily_costs(start_date: str, end_date: str, start_ts: int, end_ts: int, codex: DailyTokens, glm: DailyTokens, dsh_detailed: dict[date, dict[str, dict[str, int]]] | None = None, codex_detailed: dict[date, dict[str, dict[str, int]]] | None = None) -> DailyCosts | None:
+def compute_daily_costs(start_date: str, end_date: str, start_ts: int, end_ts: int, codex: DailyTokens, dsh_detailed: dict[date, dict[str, dict[str, int]]] | None = None, codex_detailed: dict[date, dict[str, dict[str, int]]] | None = None) -> DailyCosts | None:
     start_d = datetime.strptime(start_date, '%Y-%m-%d').date()
     end_d = datetime.strptime(end_date, '%Y-%m-%d').date()
     daily_costs = defaultdict(float)
@@ -2036,15 +1946,13 @@ def compute_daily_costs(start_date: str, end_date: str, start_ts: int, end_ts: i
     for d, v in _codex_local.calc_cost(codex_detailed).items():
         if start_d <= d <= end_d:
             daily_costs[d] += v
-    for d, v in calc_glm_cost(glm).items():
-        if start_d <= d <= end_d:
-            daily_costs[d] += v
     if dsh_detailed is None:
         dsh_detailed = _dsh_usage.load_dsh_detailed(start_date=start_d, end_date=end_d)
     for d, v in _dsh_usage.calc_dsh_cost(dsh_detailed).items():
         if start_d <= d <= end_d:
             daily_costs[d] += v
-    opencode_detailed = load_opencode_detailed(exclude_glm=True, start_ts=start_ts, end_ts=end_ts)
+    # OpenCode now includes zai-coding-plan GLM (the cloud usage path is retired).
+    opencode_detailed = load_opencode_detailed(start_ts=start_ts, end_ts=end_ts)
     for d, v in calc_opencode_cost(opencode_detailed).items():
         if start_d <= d <= end_d:
             daily_costs[d] += v
@@ -2308,14 +2216,9 @@ def build_latest_dashboard_payload(days: int = 30, *, no_cost: bool = False, ski
             print(f"Failed to export Cursor: {e}")
     cursor = load_cursor()
 
-    glm_token = os.environ.get('GLM_BEARER_TOKEN', '')
-    if glm_token:
-        print("Exporting GLM data...")
-        try:
-            export_glm(glm_token, start_date, end_date)
-        except Exception as e:
-            print(f"Failed to export GLM: {e}")
-    glm = load_glm()
+    # GLM/Z.ai usage is local-only: the Z.ai coding-plan usage API is a quota
+    # source, not a usage source. Z.ai GLM usage lives in the local OpenCode DB
+    # (zai-coding-plan) and is picked up below with the other OpenCode models.
 
     # Provider order for display: z.ai GLM -> Ollama -> Codex -> Claude Code -> Antigravity -> Grok.
     glm_quota, quotas = collect_quotas()
@@ -2342,8 +2245,8 @@ def build_latest_dashboard_payload(days: int = 30, *, no_cost: bool = False, ski
             bucket = classify_dsh_bucket(model_id)
             dsh_buckets[bucket][d] = dsh_buckets[bucket].get(d, 0) + total
 
-    print("Loading OpenCode data (excluding zai-coding-plan GLM, split: Anthropic / Gemini / GLM / GPT / DeepSeek / Grok / Qwen / other)...")
-    opencode_data = load_opencode(exclude_glm=True, start_ts=start_day_ts, end_ts=next_day_ts)
+    print("Loading OpenCode data (split: Anthropic / Gemini / GLM / GPT / DeepSeek / Grok / Qwen / other)...")
+    opencode_data = load_opencode(start_ts=start_day_ts, end_ts=next_day_ts)
     anthropic = opencode_data['anthropic']
     gemini = opencode_data['gemini']
     glm_opencode = opencode_data['glm_opencode']
@@ -2378,11 +2281,11 @@ def build_latest_dashboard_payload(days: int = 30, *, no_cost: bool = False, ski
         opencode_other[d] = opencode_other.get(d, 0) + v
 
     print("Estimating AI active time from OpenCode + Codex turn windows...")
-    opencode_turn_intervals = load_opencode_turn_intervals(exclude_glm=True, start_ts=start_day_ts, end_ts=next_day_ts)
+    opencode_turn_intervals = load_opencode_turn_intervals(start_ts=start_day_ts, end_ts=next_day_ts)
     codex_turn_intervals = load_codex_turn_intervals(start_date, end_date)
     daily_active_seconds = compute_daily_ai_active_seconds(opencode_turn_intervals, codex_turn_intervals, start_date, end_date)
 
-    daily_costs = compute_daily_costs(start_date, end_date, start_day_ts, next_day_ts, codex, glm, dsh_detailed=dsh_detailed, codex_detailed=codex_detailed) if not no_cost else None
+    daily_costs = compute_daily_costs(start_date, end_date, start_day_ts, next_day_ts, codex, dsh_detailed=dsh_detailed, codex_detailed=codex_detailed) if not no_cost else None
     if daily_costs is not None and antigravity_detailed:
         for d, v in calc_antigravity_cost(antigravity_detailed).items():
             if start_d <= d <= end_d:
@@ -2404,9 +2307,9 @@ def build_latest_dashboard_payload(days: int = 30, *, no_cost: bool = False, ski
     for d, v in dsh_buckets['opencode_other'].items():
         opencode_other[d] = opencode_other.get(d, 0) + v
     gpt_combined = merge_daily_tokens(gpt_opencode, codex)
-    # DSH zai/glm-* joins the GLM bucket: the Z.ai monitor API does not see
-    # DSH-routed calls, so this adds usage the API bucket cannot double count.
-    glm_combined = merge_daily_tokens(glm, glm_opencode, dsh_buckets['glm_opencode'])
+    # GLM is local-only now: OpenCode-routed zai-coding-plan GLM plus
+    # DSH-routed Z.ai GLM. The cloud usage bucket is retired.
+    glm_combined = merge_daily_tokens(glm_opencode, dsh_buckets['glm_opencode'])
     payload = generate_dashboard(cursor, glm_combined, gemini, dict(claude_combined), gpt_combined, opencode_deepseek, opencode_grok, opencode_qwen, opencode_other, start_date, end_date, daily_costs, daily_active_seconds=daily_active_seconds, skip_desktop_chart=skip_desktop_chart, glm_quota=glm_quota, quotas=quotas)
     if record:
         record_history(payload)
@@ -2484,8 +2387,8 @@ def build_model_breakdown(days: int = 30, *, include_daily: bool = True) -> dict
     # Collect: {source: {model: {date: {input, output, cache_read, cache_write, total}}}}
     source_data: dict[str, dict[date, dict[str, dict[str, int]]]] = {}
 
-    # OpenCode (per-model detailed)
-    oc_detail = load_opencode_detailed(exclude_glm=True, start_ts=start_ts, end_ts=next_day_ts)
+    # OpenCode (per-model detailed, includes zai-coding-plan GLM)
+    oc_detail = load_opencode_detailed(start_ts=start_ts, end_ts=next_day_ts)
     source_data['opencode'] = oc_detail
 
     # Claude Code (per-model detailed)
@@ -2503,13 +2406,8 @@ def build_model_breakdown(days: int = 30, *, include_daily: bool = True) -> dict
     cursor_detail = _load_cursor_detailed()
     source_data['cursor'] = cursor_detail
 
-    # GLM (total only, no per-category breakdown from API)
-    glm_daily = load_glm()
-    glm_models: dict[date, dict[str, dict[str, int]]] = {}
-    for d, total in glm_daily.items():
-        if start_d <= d <= end_d:
-            glm_models[d] = {'glm-coding-plan': {'total': total}}
-    source_data['glm'] = glm_models
+    # GLM (zai-coding-plan) is now part of the OpenCode source above; the
+    # cloud usage API is retired (it is a quota source, not a usage source).
 
     # Codex (per-model split from local rollout JSONL)
     source_data['codex'] = _codex_local.load_detailed(start_date=start_d, end_date=end_d)

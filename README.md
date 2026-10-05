@@ -25,7 +25,7 @@ You do not need every platform connected on day one. The tool enables each sourc
 - **OpenCode**: If you use OpenCode, the tool reads the main local OpenCode SQLite database by default. If you also use `opencode_skill` for archive querying, set `AI_USAGE_OPENCODE_SKILL_PATH` in `.env`.
 - **Cursor**: To include Cursor dashboard exports, set `CURSOR_COOKIE` in `.env`. This browser cookie must stay private. With the cookie present, the dashboard also fetches `GET /api/usage-summary` and adds the two monthly quota windows shown on the Cursor spending page to the unified `quotas` array: `Cursor Models` (the "Cursor models" bar = Composer + Cursor's own models, `autoPercentUsed`) and `Cursor Other` (the "Other models" bar = other named/frontier models, `apiPercentUsed`), both resetting at the billing-cycle end. An expired cookie returns a non-JSON login page, which is rejected so the last good cached snapshot (`cursor_usage_summary.json`) is preserved.
 - **Grok**: To include SuperGrok / X Premium weekly usage pool, set `GROK_COOKIE` in `.env` (browser cookie from grok.com while logged in). This cookie must stay private. A 0% week omits the float field in the grpc-web response (proto3 default); the parser maps that to 0% so the quota bar still appears. Token category `grok` is filled from local OpenCode usage independently of the cookie.
-- **GLM/Z.ai**: To include the GLM/Z.ai usage API, set `GLM_BEARER_TOKEN` in `.env`. This bearer token must stay private.
+- **GLM/Z.ai**: `GLM_BEARER_TOKEN` in `.env` (private) enables the coding-plan **quota** snapshot only. Z.ai GLM **usage** is read locally from the OpenCode database, not from the cloud usage API (which is a quota source, not a usage source).
 
 A minimal `.env` can be empty. The tool will still use local sources it can discover automatically; sources without credentials are skipped or read from existing local caches.
 
@@ -82,8 +82,8 @@ history database (see below). Query params: `provider`, `label`, and `days`.
 
 `GET /api/v1/model-breakdown` returns per-model token usage (input, output,
 cache_read, cache_write, total) across all data sources, sorted by total tokens
-descending. Sources that only provide total tokens (GLM API, Codex) have
-per-category fields set to `null`. Query params:
+descending. Sources that only provide total tokens have per-category fields set
+to `null`. Query params:
 
 - `days` (default 30): number of days to cover.
 - `daily` (default true): set to `false` to omit per-day entries and return
@@ -130,9 +130,9 @@ If a LAN device needs access, configure the host through private local config or
 
 - Codex: local rollout JSONL under `~/.codex/sessions` (and `~/.codex/archived_sessions`). Each log is an event stream with per-event timestamps; `token_count` events carry the per-turn input/cache/output split, so this source is timestamp-precise and needs no external tool. Re-emitted samples (cumulative not advancing) are skipped, and reasoning is folded into output, so per-day totals equal `ccusage codex daily` `totalTokens + reasoningOutputTokens`. The `ccusage` export path is retained as an optional override
 - Cursor: `cursor.com/api/dashboard/export-usage-events-csv` (usage) and `cursor.com/api/usage-summary` (monthly quota), with a private browser cookie
-- GLM/Z.ai: usage API, with a private bearer token
+- GLM/Z.ai: local OpenCode database (`zai-coding-plan`). The cloud Z.ai API is used for the coding-plan quota snapshot only, not for usage
 - Claude Code: local Claude Code JSONL session logs
-- DeepSeek Harness (DSH): local `~/.dsh/sessions` logs, plain or Zstandard-compressed JSONL (the `zstd` binary must be on PATH for compressed logs). Each session directory may hold several format generations (`session.jsonl` plus `session.vN.jsonl`, each optionally `.zstd`); every generation is a full replay of the session, so only the newest generation per session directory is counted. Z.ai GLM usage routed through DSH joins the GLM bucket because the Z.ai usage API does not see it; local models (e.g. LM Studio) are reported in the Other bucket at $0
+- DeepSeek Harness (DSH): local `~/.dsh/sessions` logs, plain or Zstandard-compressed JSONL (the `zstd` binary must be on PATH for compressed logs). Each session directory may hold several format generations (`session.jsonl` plus `session.vN.jsonl`, each optionally `.zstd`); every generation is a full replay of the session, so only the newest generation per session directory is counted. Z.ai GLM usage routed through DSH joins the GLM bucket; local models (e.g. LM Studio) are reported in the Other bucket at $0
 - OpenCode: local OpenCode SQLite database; optional archive support can use a separate `opencode_skill` installation
 
 All paths and credentials are local environment details. The public repository documents contracts only; it does not include real data.
