@@ -13,19 +13,30 @@ event types matter here:
     the FULL input context for that turn (cache-INCLUSIVE), ``cached_input_tokens``
     the cached subset, ``output_tokens``/``reasoning_output_tokens`` the per-turn
     output deltas, ``cache_write_input_tokens`` the cache-write count.
-  - ``payload.info.total_token_usage``: session-cumulative totals (used only to
-    validate; we sum the per-turn samples).
+  - ``payload.info.total_token_usage``: session-cumulative totals. A re-emitted
+    ``token_count`` event can repeat the previous sample without the cumulative
+    advancing (a periodic re-report, not new work); those repeats are skipped by
+    comparing the cumulative total to the previous sample's.
 
 Every event carries an ISO ``timestamp``, so this source is timestamp-precise
 (seconds/ms), unlike the day-bucketed ``ccusage codex daily`` export it
-replaces. Summing the per-turn samples per day reproduces ccusage's daily
-totals exactly, including the input/cache/output split:
+replaces. Grouping the per-turn samples by their event timestamp reproduces
+ccusage's daily split:
 
     input_non_cached = sum(input_tokens) - sum(cached_input_tokens)
 
+Grouping is by EVENT date, not filename date: a session can append events after
+midnight, so a file's events may land on days later than its name implies
+(observed up to ~8 days). The filename is only an upper-bound prefilter (a
+session's events never precede its start), never a lower bound.
+
 The token split is mapped to the canonical three-part form used across the
 dashboard: non-cached input, cached input, output (reasoning folded into
-output), cache-write.
+output), cache-write. ccusage excludes reasoning from its ``totalTokens``; we
+fold it into output to stay consistent with the other local sources and to bill
+it (OpenAI bills reasoning as output), so headline totals differ from ccusage by
+the reasoning count on days where it is non-zero, while the cost model stays
+correct.
 """
 from __future__ import annotations
 
@@ -80,11 +91,14 @@ def iter_session_files(
     start_date: date | None = None,
     end_date: date | None = None,
 ) -> Iterator[Path]:
-    """Yield rollout files whose filename date falls in [start_date, end_date].
+    """Yield rollout files that can contain events in the window.
 
-    The filename carries the session start date, which is a cheap and reliable
-    pre-filter: a session's events rarely fall outside the day it started, and
-    per-event dates are re-checked against the window afterward.
+    The filename carries the session START date, and a session's events never
+    precede its start. So a filename date AFTER ``end_date`` proves the file has
+    no in-window events and can be skipped. A filename date BEFORE ``start_date``
+    proves nothing — a session that started earlier can still append events
+    inside the window (observed spill of up to ~8 days) — so those files are
+    kept and their per-event dates are checked downstream.
     """
     sessions_dir = sessions_dir or DEFAULT_CODEX_SESSIONS_DIR
     archive_dir = archive_dir or DEFAULT_CODEX_ARCHIVE_DIR
@@ -99,10 +113,19 @@ def iter_session_files(
             file_date = _start_date_from_filename(path.name)
             if file_date is None:
                 continue
-            if start_date and file_date < start_date:
-                continue
+            # Upper bound: the session started after the window, so it cannot
+            # have earlier events.
             if end_date and file_date > end_date:
                 continue
+            # Lower bound by mtime: if the file was last written before the
+            # window began, it has no in-window events. This keeps the scan
+            # bounded for recent windows despite forward spill.
+            if start_date:
+                try:
+                    if datetime.fromtimestamp(path.stat().st_mtime).date() < start_date:
+                        continue
+                except OSError:
+                    continue
             yield path
 
 
@@ -111,11 +134,16 @@ def parse_session_file(path: Path) -> tuple[str, list[CodexUsageRecord]]:
 
     Model is taken from the most recent ``turn_context`` preceding each usage
     event. ``last_token_usage`` is the per-turn delta, so records are summed
-    directly (no cumulative/last-wins handling needed).
+    directly — except that Codex periodically re-emits a ``token_count`` event
+    repeating the previous sample without the cumulative ``total_token_usage``
+    advancing. Those repeats are not new work and are skipped by comparing the
+    cumulative total to the previous sample's. (Observed in ~40% of samples;
+    summing them overcounts by billions of tokens.)
     """
     model = 'unknown'
     session_id = ''
     records: list[CodexUsageRecord] = []
+    prev_cumulative_total: int | None = None
     try:
         with path.open() as f:
             for line in f:
@@ -147,6 +175,14 @@ def parse_session_file(path: Path) -> tuple[str, list[CodexUsageRecord]]:
                 usage = info.get('last_token_usage') if isinstance(info, dict) else None
                 if not isinstance(usage, dict):
                     continue
+                cumulative = info.get('total_token_usage') if isinstance(info, dict) else None
+                cumulative_total = cumulative.get('total_tokens') if isinstance(cumulative, dict) else None
+                # Skip re-emitted samples where the session cumulative did not
+                # advance (a repeat, not new work).
+                if isinstance(cumulative_total, int) and cumulative_total == prev_cumulative_total:
+                    continue
+                if isinstance(cumulative_total, int):
+                    prev_cumulative_total = cumulative_total
                 when = _event_time(raw)
                 if when is None:
                     continue

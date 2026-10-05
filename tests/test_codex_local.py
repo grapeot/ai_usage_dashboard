@@ -28,9 +28,10 @@ def _turn(model: str) -> dict:
     return {'timestamp': '2026-03-20T10:00:00.000Z', 'type': 'turn_context', 'payload': {'model': model}}
 
 
-def _token_count(input_tokens: int, cached: int, output: int, reasoning: int = 0, cache_write: int = 0) -> dict:
+def _token_count(input_tokens: int, cached: int, output: int, reasoning: int = 0, cache_write: int = 0,
+                 cumulative: int | None = None, timestamp: str = '2026-03-20T10:00:05.000Z') -> dict:
     return {
-        'timestamp': '2026-03-20T10:00:05.000Z',
+        'timestamp': timestamp,
         'type': 'event_msg',
         'payload': {
             'type': 'token_count',
@@ -42,6 +43,7 @@ def _token_count(input_tokens: int, cached: int, output: int, reasoning: int = 0
                     'reasoning_output_tokens': reasoning,
                     'cache_write_input_tokens': cache_write,
                 },
+                'total_token_usage': {'total_tokens': cumulative} if cumulative is not None else None,
             },
         },
     }
@@ -53,6 +55,36 @@ def test_iter_session_files_filters_by_filename_date(tmp_path):
     _write_session(sessions, '2026-03-25', 'rollout-2026-03-25T10-00-00-def.jsonl', [])
     found = list(iter_session_files(sessions_dir=sessions, archive_dir=tmp_path / 'none', start_date=date(2026, 3, 18), end_date=date(2026, 3, 21)))
     assert [p.name for p in found] == ['rollout-2026-03-20T10-00-00-abc.jsonl']
+
+
+def test_iter_session_files_keeps_earlier_file_that_spills_into_window(tmp_path):
+    # A session that started before the window can append events inside it, so
+    # its (earlier) filename must NOT be dropped by a start-date prefilter.
+    # The event timestamp is chosen so it lands on 2026-03-20 in local time.
+    sessions = tmp_path / 'sessions'
+    _write_session(sessions, '2026-03-18', 'rollout-2026-03-18T23-00-00-abc.jsonl', [
+        _turn('gpt-5-codex'),
+        _token_count(100, 0, 10, timestamp='2026-03-20T20:00:00.000Z'),
+    ])
+    found = list(iter_session_files(sessions_dir=sessions, archive_dir=tmp_path / 'none', start_date=date(2026, 3, 20), end_date=date(2026, 3, 20)))
+    assert len(found) == 1
+    assert load_daily(sessions_dir=sessions, archive_dir=tmp_path / 'none', start_date=date(2026, 3, 20), end_date=date(2026, 3, 20)) == {date(2026, 3, 20): 110}
+
+
+def test_duplicate_token_count_events_are_skipped(tmp_path):
+    # Codex re-emits a token_count sample without the cumulative advancing;
+    # those repeats are not new work and must not be summed twice.
+    sessions = tmp_path / 'sessions'
+    _write_session(sessions, '2026-03-20', 'rollout-2026-03-20T10-00-00-abc.jsonl', [
+        _turn('gpt-5-codex'),
+        _token_count(1000, 600, 100, cumulative=1100),
+        _token_count(1000, 600, 100, cumulative=1100),  # repeat: same cumulative
+        _token_count(2000, 1000, 200, cumulative=3200),  # advanced: new work
+    ])
+    detailed = load_detailed(sessions_dir=sessions, archive_dir=tmp_path / 'none')
+    # first sample only contributes (400 non-cached + 600 cached + 100 out),
+    # plus the advanced sample (1000 + 1000 + 200)
+    assert detailed[date(2026, 3, 20)]['gpt-5-codex'] == {'input': 1400, 'output': 300, 'cache_read': 1600, 'cache_write': 0}
 
 
 def test_non_cached_input_is_total_minus_cached(tmp_path):
