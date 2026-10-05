@@ -122,8 +122,8 @@ class QuotaSample(BaseModel):
     provider: str = Field(description='Provider name, e.g. ollama, codex, claude.')
     label: str = Field(description='Quota window label, e.g. 5h, 7d.')
     percentage: float = Field(description='Percentage of the window used at capture time (0-100).')
-    reset_iso: Optional[str] = Field(default=None, description='Local ISO reset time of the window this reading belongs to.')
-    reset_ms: Optional[int] = Field(default=None, description='Epoch-millisecond reset time of the window this reading belongs to.')
+    reset_iso: Optional[str] = Field(default=None, description='Local ISO reset time of the window this reading belongs to, derived from the normalized reset_ms.')
+    reset_ms: Optional[int] = Field(default=None, description='Epoch-millisecond reset time of the window this reading belongs to, normalized to the minute to absorb provider jitter.')
     usage: Optional[int] = Field(default=None, description='Absolute usage when the provider exposes it.')
     remaining: Optional[int] = Field(default=None, description='Absolute remaining amount when the provider exposes it.')
     source: Optional[str] = Field(default=None, description='Writer of this sample, e.g. "dashboard" (full build driven by the E1002 hourly refresh).')
@@ -132,9 +132,10 @@ class QuotaSample(BaseModel):
 class QuotaHistoryResponse(BaseModel):
     """Time series of quota readings from the history database.
 
-    Samples are written only when a reading changes, so a flat window is a
-    single point and the series stays compact. The transition to a new window
-    appears as a sample with a different reset time.
+    A row is stored on every observation (no dedup, no retention policy yet),
+    so a flat window appears as repeated points and the series carries how long
+    a percentage stayed flat. Reset timestamps are normalized to the minute so
+    provider jitter cannot masquerade as a window change.
     """
 
     generated_at: Optional[str] = Field(default=None, description='Generation time of this response in local ISO format.')

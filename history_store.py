@@ -100,22 +100,40 @@ def _now() -> str:
 
 # Providers compute a window's reset as "now + TTL", so the same physical
 # window can report reset times that differ by sub-second jitter between reads.
-# Rounding the reset to the minute collapses that jitter: two reads of the same
-# window land on the same minute, while a genuine rollover moves by the full
-# window length (hours or days) and stays distinct.
+# Provider resets are aligned to a whole minute (observed as, e.g.,
+# 14:00:00 +/- 0.4s), so rounding to the nearest minute collapses the jitter:
+# both 13:59:59.98 and 14:00:00.39 land on 14:00:00. A genuine rollover moves by
+# the full window length (hours or days) and stays distinct.
+#
+# Round (not floor) is deliberate: floor would push the earlier jitter sample
+# of a whole-minute reset down to 13:59 and split one window into two, which is
+# the exact failure this normalization exists to prevent.
 _RESET_BUCKET_SECONDS = 60
 
 
 def normalize_reset(reset_ms: int | None) -> int | None:
     """Round a reset timestamp to the nearest minute to absorb provider jitter.
 
-    Sub-minute differences are an artifact of the provider recomputing
-    ``now + TTL`` at request time, not a real window change.
+    Provider resets are aligned to whole minutes; sub-minute differences are an
+    artifact of the provider recomputing ``now + TTL`` at request time, not a
+    real window change.
     """
     if reset_ms is None:
         return None
     bucket = _RESET_BUCKET_SECONDS * 1000
     return int(round(reset_ms / bucket) * bucket)
+
+
+def reset_iso_from_ms(reset_ms: int | None) -> str | None:
+    """Local ISO reset time derived from the normalized millisecond value.
+
+    Deriving the ISO form from the normalized ms (rather than storing the raw
+    ``next_reset_iso``) keeps the two columns consistent, so consumers using
+    either field see the same jitter-free window identity.
+    """
+    if reset_ms is None:
+        return None
+    return datetime.fromtimestamp(reset_ms / 1000).replace(microsecond=0).isoformat()
 
 
 def record_quota_snapshots(
@@ -128,10 +146,10 @@ def record_quota_snapshots(
     """Append every quota reading, one row per window per call.
 
     No deduplication: an unchanged reading is still recorded so the series
-    carries how long a percentage stayed flat. The reset timestamp is
-    normalized to the minute so provider jitter cannot masquerade as a window
-    change. There is no retention policy yet; rows accumulate until one is
-    added.
+    carries how long a percentage stayed flat. Both the millisecond and ISO
+    reset forms are normalized to the minute so provider jitter cannot
+    masquerade as a window change. There is no retention policy yet; rows
+    accumulate until one is added.
     """
     if not quotas:
         return 0
@@ -140,6 +158,7 @@ def record_quota_snapshots(
     inserted = 0
     try:
         for q in quotas:
+            reset_ms = normalize_reset(q.get('next_reset_time_ms'))
             conn.execute(
                 'INSERT INTO quota_samples '
                 '(observed_at, provider, label, percentage, reset_iso, reset_ms, usage, remaining, source) '
@@ -149,8 +168,8 @@ def record_quota_snapshots(
                     str(q.get('provider', 'unknown')),
                     str(q.get('label', 'unknown')),
                     float(q.get('percentage', 0) or 0),
-                    q.get('next_reset_iso'),
-                    normalize_reset(q.get('next_reset_time_ms')),
+                    reset_iso_from_ms(reset_ms),
+                    reset_ms,
                     q.get('usage'),
                     q.get('remaining'),
                     source,
@@ -244,7 +263,7 @@ def quota_history(
     if label:
         where.append('label = ?')
         params.append(label)
-    if days:
+    if days is not None:
         where.append('observed_at >= ?')
         params.append((datetime.now() - timedelta(days=days)).replace(microsecond=0).isoformat())
     sql = 'SELECT observed_at, provider, label, percentage, reset_iso, reset_ms, usage, remaining, source FROM quota_samples'
@@ -262,7 +281,7 @@ def usage_history(days: int | None = None, *, path: str | None = None) -> list[d
     """Return per-day aggregate usage rows ordered by date."""
     sql = 'SELECT * FROM usage_daily'
     params: list[Any] = []
-    if days:
+    if days is not None:
         cutoff = (datetime.now() - timedelta(days=days)).date().isoformat()
         sql += ' WHERE date >= ?'
         params.append(cutoff)

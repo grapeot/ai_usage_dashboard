@@ -2397,22 +2397,28 @@ def record_history(payload: Mapping[str, object], *, source: str = 'dashboard') 
     """Persist this run's quota bars and daily token rows to the history DB.
 
     Best-effort: the dashboard's job is to render, not to be a database
-    client, so any history failure is logged and swallowed. Quota samples are
-    the priority; usage rows are secondary and upsert by date.
+    client, so any history failure is logged and swallowed. The two writes are
+    independent — a failure recording quota samples must not skip the daily
+    usage rows, so each is guarded on its own.
     """
+    quota_written = 0
+    usage_written = 0
     try:
         quota_written = history_store.record_quota_snapshots(
             cast(Sequence[Mapping[str, Any]], payload.get('quotas') or []),
             source=source,
         )
+    except Exception as e:  # noqa: BLE001 - history must never break a dashboard run
+        print(f"Quota history record skipped: {e}", file=sys.stderr)
+    try:
         usage_written = history_store.record_usage_daily(
             cast(Sequence[Mapping[str, Any]], payload.get('daily') or []),
             source=source,
         )
-        if quota_written or usage_written:
-            print(f"History: {quota_written} quota sample(s), {usage_written} daily row(s) recorded.")
     except Exception as e:  # noqa: BLE001 - history must never break a dashboard run
-        print(f"History record skipped: {e}", file=sys.stderr)
+        print(f"Usage history record skipped: {e}", file=sys.stderr)
+    if quota_written or usage_written:
+        print(f"History: {quota_written} quota sample(s), {usage_written} daily row(s) recorded.")
 
 
 def _load_cursor_detailed(path=None) -> dict[date, dict[str, dict[str, int]]]:

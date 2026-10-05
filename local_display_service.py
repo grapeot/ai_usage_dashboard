@@ -125,7 +125,7 @@ def quotas() -> dict[str, Any]:
     "/api/v1/quota-history",
     response_model=QuotaHistoryResponse,
     summary="Return the quota bar time series",
-    description="Returns deduplicated quota readings from the history database. A sample is stored only when a window's percentage or reset time changes, so a flat window is one point and a window rollover shows up as a sample with a new reset time. Optionally filter by provider, window label, and a trailing day count.",
+    description="Returns quota readings from the history database. A row is stored on every observation (no dedup, no retention policy yet), so the series records how long each percentage stayed flat as well as its changes. Reset timestamps are normalized to the minute so provider jitter cannot masquerade as a window change. Optionally filter by provider, window label, and a trailing day count.",
 )
 def quota_history(provider: str | None = None, label: str | None = None, days: int | None = None) -> dict[str, Any]:
     samples = history_store.quota_history(provider=provider, label=label, days=days)
