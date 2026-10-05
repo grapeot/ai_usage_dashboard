@@ -4,7 +4,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from pricing_config import get_pricing, calc_cost
+from pricing_config import get_pricing, calc_cost, calc_cost_from_parts
 
 
 class TestGetPricing:
@@ -237,3 +237,38 @@ class TestCalcCost:
         p = get_pricing("gpt-5.6-sol")
         cost = calc_cost(p, input_tokens=0, cache_write_tokens=1_000_000)
         assert cost == 5.0
+
+
+class TestCalcCostFromParts:
+    """The canonical three-part split is the preferred entry point."""
+
+    def test_parts_match_wrapper(self):
+        p = get_pricing("glm-5.3-flash")
+        # The three-part form takes non-cached and cached input separately;
+        # the wrapper takes a cache-inclusive total. They must agree.
+        parts = calc_cost_from_parts(p, input_non_cached=1_000_000, input_cached=1_000_000, output=100_000)
+        wrapper = calc_cost(p, input_tokens=2_000_000, output_tokens=100_000, cached_tokens=1_000_000)
+        assert parts == wrapper
+
+    def test_non_cached_is_not_zeroed_by_negative_guard(self):
+        # The bug class this API prevents: passing a non-cached count as a
+        # cache-inclusive total made `non_cached = max(0, total - cached)`
+        # collapse to 0 and silently drop the input cost.
+        p = get_pricing("glm-5.3-flash")
+        cost = calc_cost_from_parts(p, input_non_cached=1_000_000, input_cached=0, output=0)
+        assert cost == 1_000_000 * 0.15 / 1_000_000
+
+    def test_codex_ccusage_fields(self):
+        # ccusage emits `inputTokens` (non-cached) + `cacheReadTokens`; mapping
+        # them to the split bills cache instead of dropping it. Synthetic
+        # numbers; the point is the field names, not the magnitudes.
+        p = get_pricing("glm-5.3-flash")
+        cost = calc_cost_from_parts(p, input_non_cached=1_000, input_cached=10_000, output=500)
+        expected = 1_000 * 0.15 / 1e6 + 10_000 * 0.03 / 1e6 + 500 * 0.5 / 1e6
+        assert abs(cost - expected) < 1e-12
+        # If cache were silently ignored (billed at $0), the cost would drop.
+        no_cache = calc_cost_from_parts(p, input_non_cached=1_000, input_cached=0, output=500)
+        assert cost > no_cache
+
+    def test_none_pricing_returns_zero(self):
+        assert calc_cost_from_parts(None, input_non_cached=1_000_000) == 0.0

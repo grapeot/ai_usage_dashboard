@@ -7,6 +7,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
+from pricing_config import get_pricing  # noqa: E402
 from dsh_usage import (  # noqa: E402
     _session_log_generation,
     calc_dsh_cost,
@@ -198,3 +199,23 @@ def test_cost_pricing(tmp_path: Path) -> None:
     local_only = {date(2026, 8, 14): {'lmstudio/qwen3.8-27b-mlx': {'input': 1000, 'output': 100, 'cache_read': 0, 'cache_write': 0}}}
     # Local LM Studio / MLX models are in the table at $0.
     assert calc_dsh_cost(local_only) == {date(2026, 8, 14): 0.0}
+
+
+def test_cost_bills_non_cached_input(tmp_path: Path) -> None:
+    # Regression: DSH stores `input` as NON-cached input with `cache_read`
+    # separate. Passing it as a cache-inclusive total used to subtract the
+    # cache again and collapse to $0 for the input portion.
+    detailed = {
+        date(2026, 8, 14): {
+            'zai/glm-5.3': {'input': 1_000_000, 'output': 100_000, 'cache_read': 1_000_000, 'cache_write': 0}
+        }
+    }
+    cost = calc_dsh_cost(detailed)[date(2026, 8, 14)]
+    p = get_pricing('glm-5.3')
+    expected = (
+        1_000_000 * p['input'] / 1_000_000
+        + 1_000_000 * p['cached'] / 1_000_000
+        + 100_000 * p['output'] / 1_000_000
+    )
+    assert abs(cost - expected) < 1e-9
+    assert cost > 0

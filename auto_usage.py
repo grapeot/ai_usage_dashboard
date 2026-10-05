@@ -27,7 +27,7 @@ import antigravity_usage as _antigravity_usage
 import dsh_usage as _dsh_usage
 import grok_usage as _grok_usage
 import history_store
-from pricing_config import get_pricing, calc_cost
+from pricing_config import get_pricing, calc_cost_from_parts
 
 plt.rcParams['axes.unicode_minus'] = False
 
@@ -1728,7 +1728,7 @@ def calc_antigravity_cost(detailed: dict[date, dict[str, dict[str, int]]]) -> Da
     return _antigravity_usage.calculate_cost(
         detailed,
         pricing_lookup=get_pricing,
-        cost_calculator=calc_cost,
+        cost_calculator=calc_cost_from_parts,
     )
 
 
@@ -1957,11 +1957,15 @@ def calc_codex_cost(usage_path=None) -> DailyCosts:
         for model_name, m in entry.get('models', {}).items():
             p = get_pricing(model_name)
             if p:
-                total_cost += calc_cost(
+                # ccusage emits `inputTokens` (non-cached) and `cacheReadTokens`
+                # separately; map them to the canonical split. Reading a
+                # nonexistent `cachedInputTokens` silently billed cache at $0.
+                total_cost += calc_cost_from_parts(
                     p,
-                    input_tokens=m.get('inputTokens', 0),
-                    output_tokens=m.get('outputTokens', 0) + m.get('reasoningOutputTokens', 0),
-                    cached_tokens=m.get('cachedInputTokens', 0),
+                    input_non_cached=m.get('inputTokens', 0),
+                    input_cached=m.get('cacheReadTokens', 0),
+                    output=m.get('outputTokens', 0) + m.get('reasoningOutputTokens', 0),
+                    cache_write=m.get('cacheCreationTokens', 0),
                 )
         result[dt] = total_cost
     return result
@@ -1983,12 +1987,12 @@ def calc_opencode_cost(detailed: DailyModelTokens) -> DailyCosts:
         for model_id, tok in models.items():
             p = get_pricing(model_id)
             if p:
-                result[dt] += calc_cost(
+                result[dt] += calc_cost_from_parts(
                     p,
-                    input_tokens=tok['input'] + tok['cache_read'],
-                    output_tokens=tok['output'],
-                    cached_tokens=tok['cache_read'],
-                    cache_write_tokens=tok['cache_write'],
+                    input_non_cached=tok['input'],
+                    input_cached=tok['cache_read'],
+                    output=tok['output'],
+                    cache_write=tok['cache_write'],
                 )
     return dict(result)
 
@@ -1999,13 +2003,13 @@ def calc_claude_code_cost(detailed: DailyModelTokens) -> DailyCosts:
         for model_id, tok in models.items():
             p = get_pricing(model_id)
             if p:
-                result[dt] += calc_cost(
+                result[dt] += calc_cost_from_parts(
                     p,
-                    input_tokens=tok['input'] + tok['cache_read'],
-                    output_tokens=tok['output'],
-                    cached_tokens=tok['cache_read'],
-                    cache_write_tokens=tok.get('cache_write', 0),
-                    cache_write_1h_tokens=tok.get('cache_write_1h', 0),
+                    input_non_cached=tok['input'],
+                    input_cached=tok['cache_read'],
+                    output=tok['output'],
+                    cache_write=tok.get('cache_write', 0),
+                    cache_write_1h=tok.get('cache_write_1h', 0),
                 )
     return dict(result)
 

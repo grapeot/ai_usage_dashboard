@@ -60,11 +60,12 @@ def calculate_cost_for_model(model_data, model_name):
     if model_name not in PRICING:
         return None
     p = PRICING[model_name]
-    input_tokens = model_data.get('inputTokens', 0)
-    cached_tokens = model_data.get('cachedInputTokens', 0)
+    # ccusage reports `inputTokens` as non-cached input and `cacheReadTokens`
+    # separately, so input is billed directly and cache is added on top.
+    non_cached = model_data.get('inputTokens', 0)
+    cached_tokens = model_data.get('cacheReadTokens', 0)
     output_tokens = model_data.get('outputTokens', 0)
-    
-    non_cached = input_tokens - cached_tokens
+
     input_cost = non_cached * p['input'] / 1_000_000
     cached_cost = cached_tokens * p['cached_input'] / 1_000_000
     output_cost = output_tokens * p['output'] / 1_000_000
@@ -122,7 +123,7 @@ def main():
             day_cost = original_cost
         
         inp = entry.get('inputTokens', 0)
-        cached = entry.get('cachedInputTokens', 0)
+        cached = entry.get('cacheReadTokens', 0)
         out = entry.get('outputTokens', 0)
         reason = entry.get('reasoningOutputTokens', 0)
         
