@@ -75,10 +75,10 @@ provider window's used and remaining percentages plus reset timestamps, without
 forcing a provider refresh. Call `POST /api/v1/display/update` first when fresh
 provider data is required.
 
-`GET /api/v1/quota-history` returns the deduplicated quota bar time series from
-the local history database (see below). Query params: `provider`, `label`, and
-`days`. `GET /api/v1/usage-history` returns the per-day aggregate rows; query
-param `days`.
+`GET /api/v1/quota-history` returns the quota bar time series from the local
+history database (see below). Query params: `provider`, `label`, and `days`.
+`GET /api/v1/usage-history` returns the per-day aggregate rows; query param
+`days`.
 
 `GET /api/v1/model-breakdown` returns per-model token usage (input, output,
 cache_read, cache_write, total) across all data sources, sorted by total tokens
