@@ -24,6 +24,7 @@ from matplotlib.font_manager import FontProperties
 import requests
 
 import antigravity_usage as _antigravity_usage
+import codex_local as _codex_local
 import dsh_usage as _dsh_usage
 import grok_usage as _grok_usage
 import history_store
@@ -629,18 +630,25 @@ def export_glm(bearer_token, start_date, end_date):
         json.dump(result, f, indent=2)
     return result
 
-def load_codex(path=None):
-    if path is None:
-        path = os.path.join(SCRIPT_DIR, 'usage.json')
-    if not os.path.exists(path):
-        return {}
-    with open(path) as f:
-        data = json.load(f)
-    daily = {}
-    for entry in data.get('daily', []):
-        dt = parse_ccusage_daily_date(entry['date'])
-        daily[dt] = entry['totalTokens']
-    return daily
+def load_codex(path=None, start_date=None, end_date=None):
+    """Codex daily total tokens.
+
+    With an explicit ``path``, read a ccusage ``codex daily --json`` export
+    (kept for tests and manual override). By default, read the local rollout
+    JSONL under ``~/.codex/sessions`` — the same event-level source ccusage
+    parses, but timestamp-precise and with no external subprocess.
+    """
+    if path is not None:
+        if not os.path.exists(path):
+            return {}
+        with open(path) as f:
+            data = json.load(f)
+        daily = {}
+        for entry in data.get('daily', []):
+            dt = parse_ccusage_daily_date(entry['date'])
+            daily[dt] = entry['totalTokens']
+        return daily
+    return _codex_local.load_daily(start_date=start_date, end_date=end_date)
 
 def load_cursor(path=None):
     if path is None:
@@ -1943,12 +1951,17 @@ def compute_daily_ai_active_seconds(opencode_intervals: list[TimeInterval], code
     return {day: total for day, total in per_day_seconds.items() if total > 0}
 
 
-def calc_codex_cost(usage_path=None) -> DailyCosts:
-    """Codex cost from usage.json, returns {date: cost_usd}."""
-    path = usage_path or os.path.join(SCRIPT_DIR, 'usage.json')
-    if not os.path.exists(path):
+def calc_codex_cost(usage_path=None, start_date=None, end_date=None) -> DailyCosts:
+    """Codex cost, returns {date: cost_usd}.
+
+    With an explicit ``usage_path``, price a ccusage export (kept for tests).
+    By default, price the local rollout JSONL via the canonical split.
+    """
+    if usage_path is None:
+        return _codex_local.calc_cost(_codex_local.load_detailed(start_date=start_date, end_date=end_date))
+    if not os.path.exists(usage_path):
         return {}
-    with open(path) as f:
+    with open(usage_path) as f:
         data = json.load(f)
     result = {}
     for entry in data.get('daily', []):
@@ -2014,11 +2027,13 @@ def calc_claude_code_cost(detailed: DailyModelTokens) -> DailyCosts:
     return dict(result)
 
 
-def compute_daily_costs(start_date: str, end_date: str, start_ts: int, end_ts: int, codex: DailyTokens, glm: DailyTokens, dsh_detailed: dict[date, dict[str, dict[str, int]]] | None = None) -> DailyCosts | None:
+def compute_daily_costs(start_date: str, end_date: str, start_ts: int, end_ts: int, codex: DailyTokens, glm: DailyTokens, dsh_detailed: dict[date, dict[str, dict[str, int]]] | None = None, codex_detailed: dict[date, dict[str, dict[str, int]]] | None = None) -> DailyCosts | None:
     start_d = datetime.strptime(start_date, '%Y-%m-%d').date()
     end_d = datetime.strptime(end_date, '%Y-%m-%d').date()
     daily_costs = defaultdict(float)
-    for d, v in calc_codex_cost().items():
+    if codex_detailed is None:
+        codex_detailed = _codex_local.load_detailed(start_date=start_d, end_date=end_d)
+    for d, v in _codex_local.calc_cost(codex_detailed).items():
         if start_d <= d <= end_d:
             daily_costs[d] += v
     for d, v in calc_glm_cost(glm).items():
@@ -2276,9 +2291,12 @@ def build_latest_dashboard_payload(days: int = 30, *, no_cost: bool = False, ski
     start_date, end_date, start_ts, end_ts = get_date_range(days)
     print(f"Date range: {start_date} to {end_date} ({days} days)")
 
-    print("Exporting Codex data...")
-    export_codex(start_date)
-    codex = load_codex()
+    start_d = datetime.strptime(start_date, '%Y-%m-%d').date()
+    end_d = datetime.strptime(end_date, '%Y-%m-%d').date()
+
+    print("Loading Codex data from local rollout JSONL...")
+    codex = load_codex(start_date=start_d, end_date=end_d)
+    codex_detailed = _codex_local.load_detailed(start_date=start_d, end_date=end_d)
 
     cursor_cookie = os.environ.get('CURSOR_COOKIE', '')
 
@@ -2303,8 +2321,6 @@ def build_latest_dashboard_payload(days: int = 30, *, no_cost: bool = False, ski
     glm_quota, quotas = collect_quotas()
 
     print("Loading Claude Code data...")
-    start_d = datetime.strptime(start_date, '%Y-%m-%d').date()
-    end_d = datetime.strptime(end_date, '%Y-%m-%d').date()
     start_day_ts = date_to_epoch_ms(start_d)
     next_day_ts = date_to_epoch_ms(end_d + timedelta(days=1))
 
@@ -2366,7 +2382,7 @@ def build_latest_dashboard_payload(days: int = 30, *, no_cost: bool = False, ski
     codex_turn_intervals = load_codex_turn_intervals(start_date, end_date)
     daily_active_seconds = compute_daily_ai_active_seconds(opencode_turn_intervals, codex_turn_intervals, start_date, end_date)
 
-    daily_costs = compute_daily_costs(start_date, end_date, start_day_ts, next_day_ts, codex, glm, dsh_detailed=dsh_detailed) if not no_cost else None
+    daily_costs = compute_daily_costs(start_date, end_date, start_day_ts, next_day_ts, codex, glm, dsh_detailed=dsh_detailed, codex_detailed=codex_detailed) if not no_cost else None
     if daily_costs is not None and antigravity_detailed:
         for d, v in calc_antigravity_cost(antigravity_detailed).items():
             if start_d <= d <= end_d:
@@ -2495,13 +2511,8 @@ def build_model_breakdown(days: int = 30, *, include_daily: bool = True) -> dict
             glm_models[d] = {'glm-coding-plan': {'total': total}}
     source_data['glm'] = glm_models
 
-    # Codex (total only from usage.json)
-    codex_daily = load_codex()
-    codex_models: dict[date, dict[str, dict[str, int]]] = {}
-    for d, total in codex_daily.items():
-        if start_d <= d <= end_d:
-            codex_models[d] = {'codex-combined': {'total': total}}
-    source_data['codex'] = codex_models
+    # Codex (per-model split from local rollout JSONL)
+    source_data['codex'] = _codex_local.load_detailed(start_date=start_d, end_date=end_d)
 
     # Aggregate per (source, model)
     model_entries: list[dict] = []
