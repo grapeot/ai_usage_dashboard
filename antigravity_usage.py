@@ -16,7 +16,7 @@ from collections import defaultdict
 from datetime import date, datetime
 from typing import Callable, TypedDict
 
-from pricing_config import calc_cost, get_pricing
+from pricing_config import calc_cost_from_parts, get_pricing
 
 
 DailyTokens = dict[date, int]
@@ -679,7 +679,7 @@ def calculate_cost(
     detailed: dict[date, dict[str, dict[str, int]]],
     *,
     pricing_lookup: Callable[[str], dict | None] = get_pricing,
-    cost_calculator: Callable[..., float] = calc_cost,
+    cost_calculator: Callable[..., float] = calc_cost_from_parts,
 ) -> DailyCosts:
     result: defaultdict[date, float] = defaultdict(float)
     for entry_date, models in detailed.items():
@@ -697,10 +697,10 @@ def calculate_cost(
                 continue
             result[entry_date] += cost_calculator(
                 pricing,
-                input_tokens=tokens['input'] + tokens['cache_read'],
-                output_tokens=tokens['output'],
-                cached_tokens=tokens['cache_read'],
-                cache_write_tokens=tokens['cache_write'],
+                input_non_cached=tokens['input'],
+                input_cached=tokens['cache_read'],
+                output=tokens['output'],
+                cache_write=tokens['cache_write'],
             )
     return dict(result)
 

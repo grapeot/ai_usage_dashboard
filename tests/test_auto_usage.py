@@ -17,6 +17,7 @@ from auto_usage import (
     build_codex_turn_intervals,
     build_opencode_turn_intervals,
     calc_claude_code_cost,
+    calc_codex_cost,
     classify_dsh_bucket,
     classify_model_bucket,
     classify_opencode_bucket,
@@ -54,6 +55,8 @@ from auto_usage import (
     parse_ccusage_daily_date,
     split_interval_by_day,
 )
+
+from pricing_config import get_pricing
 
 
 def test_classify_opencode_bucket_anthropic_provider():
@@ -432,6 +435,39 @@ def test_load_codex_accepts_old_and_new_ccusage_date_formats(tmp_path):
 def test_parse_ccusage_daily_date_accepts_old_and_new_formats():
     assert parse_ccusage_daily_date('Mar 20, 2026') == date(2026, 3, 20)
     assert parse_ccusage_daily_date('2026-03-20') == date(2026, 3, 20)
+
+
+def test_calc_codex_cost_bills_cache_read(tmp_path):
+    # Regression: ccusage names cached input `cacheReadTokens`. Reading a
+    # nonexistent `cachedInputTokens` silently billed all cache at $0. Driving
+    # calc_codex_cost end to end (synthetic numbers) fails if the field name
+    # regresses.
+    usage_path = tmp_path / 'usage.json'
+    usage_path.write_text(json.dumps({
+        'daily': [
+            {
+                'date': '2026-03-20',
+                'models': {
+                    'gpt-5.3-codex': {
+                        'inputTokens': 1_000_000,       # non-cached
+                        'cacheReadTokens': 1_000_000,    # cached
+                        'outputTokens': 100_000,
+                        'reasoningOutputTokens': 0,
+                    },
+                },
+            },
+        ],
+    }))
+    cost = calc_codex_cost(usage_path)[date(2026, 3, 20)]
+    p = get_pricing('gpt-5.3-codex')
+    expected = (
+        1_000_000 * p['input'] / 1_000_000
+        + 1_000_000 * p['cached'] / 1_000_000
+        + 100_000 * p['output'] / 1_000_000
+    )
+    assert abs(cost - expected) < 1e-9
+    # Sanity: without the cache term the cost would be visibly lower.
+    assert cost > 1_000_000 * p['input'] / 1_000_000 + 100_000 * p['output'] / 1_000_000
 
 
 def test_load_cursor_returns_empty_when_export_missing(tmp_path):

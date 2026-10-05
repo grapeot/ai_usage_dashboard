@@ -32,7 +32,7 @@ from datetime import date, datetime
 from pathlib import Path
 from typing import Any, Iterator, TypedDict
 
-from pricing_config import calc_cost, get_pricing
+from pricing_config import calc_cost_from_parts, get_pricing
 
 DEFAULT_DSH_SESSIONS_DIR = Path.home() / '.dsh' / 'sessions'
 
@@ -295,11 +295,11 @@ def calc_dsh_cost(detailed: dict[date, dict[str, dict[str, int]]]) -> dict[date,
                 pricing = get_pricing(model_id.split('/', 1)[1])
             if pricing is None:
                 continue
-            result[dt] += calc_cost(
+            result[dt] += calc_cost_from_parts(
                 pricing,
-                input_tokens=tok['input'],
-                output_tokens=tok['output'],
-                cached_tokens=tok['cache_read'],
-                cache_write_tokens=tok['cache_write'],
+                input_non_cached=tok['input'],
+                input_cached=tok['cache_read'],
+                output=tok['output'],
+                cache_write=tok['cache_write'],
             )
     return dict(result)

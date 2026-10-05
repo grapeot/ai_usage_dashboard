@@ -303,15 +303,27 @@ def get_pricing(model_id: str) -> Pricing | None:
     return None
 
 
-def calc_cost(
+def calc_cost_from_parts(
     pricing: Pricing | None,
-    input_tokens: int = 0,
-    output_tokens: int = 0,
-    cached_tokens: int = 0,
-    cache_write_tokens: int = 0,
-    cache_write_1h_tokens: int = 0,
+    *,
+    input_non_cached: int = 0,
+    input_cached: int = 0,
+    output: int = 0,
+    cache_write: int = 0,
+    cache_write_1h: int = 0,
 ) -> float:
-    """Calculate cost in USD from pricing."""
+    """Calculate cost from the canonical three-part token split.
+
+    The three parts every usage record must carry are non-cached input, cached
+    input, and output; Anthropic models add cache-write. Taking them explicitly
+    (rather than a single "total input" that the caller has to pre-add cache
+    into) removes the convention that callers could get wrong: a caller passing
+    a non-cached count as a total would silently zero out its input cost.
+
+    This is the preferred entry point; ``calc_cost`` remains as a
+    backward-compatible wrapper for callers that still hold a cache-inclusive
+    input total.
+    """
     if not pricing:
         return 0.0
     inp = pricing.get("input", 0) or 0
@@ -327,12 +339,35 @@ def calc_cost(
     cache_write_1h_rate = pricing.get("cache_write_1h")
     if cache_write_1h_rate is None:
         cache_write_1h_rate = inp * 2.0
-    non_cached = max(0, input_tokens - cached_tokens)
-    cost = (
-        non_cached * inp / 1_000_000
-        + cached_tokens * cached_rate / 1_000_000
-        + cache_write_tokens * cache_write_rate / 1_000_000
-        + cache_write_1h_tokens * cache_write_1h_rate / 1_000_000
-        + output_tokens * out / 1_000_000
+    return (
+        input_non_cached * inp / 1_000_000
+        + input_cached * cached_rate / 1_000_000
+        + cache_write * cache_write_rate / 1_000_000
+        + cache_write_1h * cache_write_1h_rate / 1_000_000
+        + output * out / 1_000_000
     )
-    return cost
+
+
+def calc_cost(
+    pricing: Pricing | None,
+    input_tokens: int = 0,
+    output_tokens: int = 0,
+    cached_tokens: int = 0,
+    cache_write_tokens: int = 0,
+    cache_write_1h_tokens: int = 0,
+) -> float:
+    """Calculate cost in USD from a cache-inclusive input total.
+
+    ``input_tokens`` is the TOTAL input (cached + non-cached); the cached part
+    is subtracted out and billed at the cache rate. New code should prefer
+    ``calc_cost_from_parts`` and pass the split explicitly.
+    """
+    non_cached = max(0, input_tokens - cached_tokens)
+    return calc_cost_from_parts(
+        pricing,
+        input_non_cached=non_cached,
+        input_cached=cached_tokens,
+        output=output_tokens,
+        cache_write=cache_write_tokens,
+        cache_write_1h=cache_write_1h_tokens,
+    )
