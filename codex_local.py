@@ -42,7 +42,7 @@ from __future__ import annotations
 
 import json
 from collections import defaultdict
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Iterator, TypedDict
 
@@ -113,9 +113,12 @@ def iter_session_files(
             file_date = _start_date_from_filename(path.name)
             if file_date is None:
                 continue
-            # Upper bound: the session started after the window, so it cannot
-            # have earlier events.
-            if end_date and file_date > end_date:
+            # Upper bound: the filename date is the session's start in UTC, but
+            # events are grouped by LOCAL date, which can be one day earlier
+            # (a session starting at 03:40 UTC is 19:40 the prior local day). So
+            # a file dated end_date+1 can still hold events on end_date; only a
+            # file dated end_date+2 is guaranteed empty for the window.
+            if end_date and file_date > end_date + timedelta(days=1):
                 continue
             # Lower bound by mtime: if the file was last written before the
             # window began, it has no in-window events. This keeps the scan

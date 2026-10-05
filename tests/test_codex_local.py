@@ -71,6 +71,21 @@ def test_iter_session_files_keeps_earlier_file_that_spills_into_window(tmp_path)
     assert load_daily(sessions_dir=sessions, archive_dir=tmp_path / 'none', start_date=date(2026, 3, 20), end_date=date(2026, 3, 20)) == {date(2026, 3, 20): 110}
 
 
+def test_result_is_independent_of_end_date(tmp_path):
+    # A file named at end_date+1 (UTC) can hold events on end_date (local). The
+    # result for a day must not change when the window's end is extended.
+    sessions = tmp_path / 'sessions'
+    # Filename 2026-03-21 (UTC) but event at 2026-03-21T03:00Z = 2026-03-20 local.
+    _write_session(sessions, '2026-03-21', 'rollout-2026-03-21T03-00-00-abc.jsonl', [
+        _turn('gpt-5-codex'),
+        _token_count(100, 0, 10, timestamp='2026-03-21T03:00:00.000Z'),
+    ])
+    day = date(2026, 3, 20)
+    one_day = load_daily(sessions_dir=sessions, archive_dir=tmp_path / 'none', start_date=day, end_date=day)
+    two_day = load_daily(sessions_dir=sessions, archive_dir=tmp_path / 'none', start_date=day, end_date=date(2026, 3, 21))
+    assert one_day == two_day == {day: 110}
+
+
 def test_duplicate_token_count_events_are_skipped(tmp_path):
     # Codex re-emits a token_count sample without the cumulative advancing;
     # those repeats are not new work and must not be summed twice.

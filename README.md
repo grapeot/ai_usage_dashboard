@@ -128,7 +128,7 @@ If a LAN device needs access, configure the host through private local config or
 
 ## Data Sources
 
-- Codex: local rollout JSONL under `~/.codex/sessions` (and `~/.codex/archived_sessions`). Each log is an event stream with per-event timestamps; `token_count` events carry the per-turn input/cache/output split, so this source is timestamp-precise and needs no external tool. Summing per-turn samples reproduces `ccusage codex daily` totals exactly. The `ccusage` export path is retained as an optional override
+- Codex: local rollout JSONL under `~/.codex/sessions` (and `~/.codex/archived_sessions`). Each log is an event stream with per-event timestamps; `token_count` events carry the per-turn input/cache/output split, so this source is timestamp-precise and needs no external tool. Re-emitted samples (cumulative not advancing) are skipped, and reasoning is folded into output, so per-day totals equal `ccusage codex daily` `totalTokens + reasoningOutputTokens`. The `ccusage` export path is retained as an optional override
 - Cursor: `cursor.com/api/dashboard/export-usage-events-csv` (usage) and `cursor.com/api/usage-summary` (monthly quota), with a private browser cookie
 - GLM/Z.ai: usage API, with a private bearer token
 - Claude Code: local Claude Code JSONL session logs
