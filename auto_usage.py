@@ -17,7 +17,7 @@ from zoneinfo import ZoneInfo
 from collections import defaultdict
 from collections.abc import Mapping
 from pathlib import Path
-from typing import TypedDict, cast
+from typing import Any, Sequence, TypedDict, cast
 import matplotlib.pyplot as plt
 import matplotlib.dates as mdates
 from matplotlib.font_manager import FontProperties
@@ -26,6 +26,7 @@ import requests
 import antigravity_usage as _antigravity_usage
 import dsh_usage as _dsh_usage
 import grok_usage as _grok_usage
+import history_store
 from pricing_config import get_pricing, calc_cost
 
 plt.rcParams['axes.unicode_minus'] = False
@@ -2188,7 +2189,84 @@ def generate_dashboard(cursor, glm, gemini, claude, gpt_opencode, deepseek, grok
     return write_eink_dashboard_payload(cursor, glm, gemini, claude, gpt_opencode, deepseek, grok, qwen, other, start_date, end_date, daily_costs, daily_active_seconds, glm_quota=glm_quota, quotas=quotas)
 
 
-def build_latest_dashboard_payload(days: int = 30, *, no_cost: bool = False, skip_desktop_chart: bool = True) -> dict[str, object]:
+def collect_quotas(*, verbose: bool = True) -> tuple[list[GlmQuotaSnapshot], list[QuotaSnapshot]]:
+    """Fetch every configured provider's quota windows.
+
+    Shared by the full dashboard build and any caller that only needs quota
+    windows. Returns ``(glm_quota, unified_quotas)``. Provider failures are
+    logged and skipped; a missing provider never blocks the others.
+    """
+    def log(message: str) -> None:
+        if verbose:
+            print(message)
+
+    glm_token = os.environ.get('GLM_BEARER_TOKEN', '')
+    glm_quota: list[GlmQuotaSnapshot] = []
+    if glm_token:
+        log("Exporting GLM quota...")
+        try:
+            export_glm_quota(glm_token)
+        except Exception as e:
+            log(f"Failed to export GLM quota: {e}")
+    glm_quota = load_glm_quota()
+
+    ollama_cookie = os.environ.get('OLLAMA_COOKIE', '')
+    if ollama_cookie:
+        log("Exporting Ollama quota...")
+        try:
+            export_ollama_quota(ollama_cookie)
+        except Exception as e:
+            log(f"Failed to export Ollama quota: {e}")
+    ollama_quota = load_ollama_quota()
+
+    log("Loading Codex quota from wham/usage API...")
+    codex_quota = load_codex_quota()
+
+    log("Loading Claude Code quota from OAuth usage endpoint...")
+    try:
+        claude_quota = export_claude_code_quota()
+    except Exception as e:
+        log(f"Failed to fetch Claude Code quota: {e}")
+        claude_quota = []
+
+    log("Loading Antigravity IDE quota from live Language Server...")
+    antigravity_quota: list[QuotaSnapshot] = []
+    try:
+        antigravity_quota = export_antigravity_quota()
+    except Exception as e:
+        log(f"Failed to fetch Antigravity quota: {e}")
+
+    grok_quota: list[QuotaSnapshot] = []
+    grok_cookie = os.environ.get('GROK_COOKIE', '')
+    if grok_cookie:
+        log("Loading Grok weekly usage pool from grok.com...")
+        try:
+            grok_quota = cast(list[QuotaSnapshot], _grok_usage.export_grok_quota(grok_cookie))
+        except Exception as e:
+            log(f"Failed to fetch Grok quota: {e}")
+
+    cursor_quota: list[QuotaSnapshot] = []
+    cursor_cookie = os.environ.get('CURSOR_COOKIE', '')
+    if cursor_cookie:
+        log("Loading Cursor quota from usage-summary API...")
+        try:
+            export_cursor_quota(cursor_cookie)
+        except Exception as e:
+            log(f"Failed to fetch Cursor quota: {e}")
+        cursor_quota = load_cursor_quota()
+
+    quotas = glm_quota_to_unified(glm_quota) + ollama_quota + codex_quota + claude_quota + antigravity_quota + grok_quota + cursor_quota
+    return glm_quota, quotas
+
+
+def build_latest_dashboard_payload(days: int = 30, *, no_cost: bool = False, skip_desktop_chart: bool = True, record: bool = False) -> dict[str, object]:
+    """Build the dashboard payload.
+
+    This is a pure read of the local sources by default: it does not touch the
+    history database. Only a genuine refresh should persist a sample, so the
+    callers that mean "refresh" pass ``record=True`` while read-only callers
+    (for example a cold cache hit on the cached-payload GET) leave it False.
+    """
     load_env()
 
     start_date, end_date, start_ts, end_ts = get_date_range(days)
@@ -2199,7 +2277,6 @@ def build_latest_dashboard_payload(days: int = 30, *, no_cost: bool = False, ski
     codex = load_codex()
 
     cursor_cookie = os.environ.get('CURSOR_COOKIE', '')
-    glm_token = os.environ.get('GLM_BEARER_TOKEN', '')
 
     if cursor_cookie:
         print("Exporting Cursor data...")
@@ -2209,6 +2286,7 @@ def build_latest_dashboard_payload(days: int = 30, *, no_cost: bool = False, ski
             print(f"Failed to export Cursor: {e}")
     cursor = load_cursor()
 
+    glm_token = os.environ.get('GLM_BEARER_TOKEN', '')
     if glm_token:
         print("Exporting GLM data...")
         try:
@@ -2217,60 +2295,8 @@ def build_latest_dashboard_payload(days: int = 30, *, no_cost: bool = False, ski
             print(f"Failed to export GLM: {e}")
     glm = load_glm()
 
-    glm_quota: list[GlmQuotaSnapshot] = []
-    if glm_token:
-        print("Exporting GLM quota...")
-        try:
-            export_glm_quota(glm_token)
-        except Exception as e:
-            print(f"Failed to export GLM quota: {e}")
-    glm_quota = load_glm_quota()
-
-    ollama_cookie = os.environ.get('OLLAMA_COOKIE', '')
-    if ollama_cookie:
-        print("Exporting Ollama quota...")
-        try:
-            export_ollama_quota(ollama_cookie)
-        except Exception as e:
-            print(f"Failed to export Ollama quota: {e}")
-    ollama_quota = load_ollama_quota()
-
-    print("Loading Codex quota from wham/usage API...")
-    codex_quota = load_codex_quota()
-
-    print("Loading Claude Code quota from OAuth usage endpoint...")
-    try:
-        claude_quota = export_claude_code_quota()
-    except Exception as e:
-        print(f"Failed to fetch Claude Code quota: {e}")
-        claude_quota = []
-
     # Provider order for display: z.ai GLM -> Ollama -> Codex -> Claude Code -> Antigravity -> Grok.
-    print("Loading Antigravity IDE quota from live Language Server...")
-    antigravity_quota: list[QuotaSnapshot] = []
-    try:
-        antigravity_quota = export_antigravity_quota()
-    except Exception as e:
-        print(f"Failed to fetch Antigravity quota: {e}")
-
-    grok_quota: list[QuotaSnapshot] = []
-    grok_cookie = os.environ.get('GROK_COOKIE', '')
-    if grok_cookie:
-        print("Loading Grok weekly usage pool from grok.com...")
-        try:
-            grok_quota = cast(list[QuotaSnapshot], _grok_usage.export_grok_quota(grok_cookie))
-        except Exception as e:
-            print(f"Failed to fetch Grok quota: {e}")
-
-    cursor_quota: list[QuotaSnapshot] = []
-    if cursor_cookie:
-        print("Loading Cursor quota from usage-summary API...")
-        try:
-            export_cursor_quota(cursor_cookie)
-        except Exception as e:
-            print(f"Failed to fetch Cursor quota: {e}")
-        cursor_quota = load_cursor_quota()
-    quotas = glm_quota_to_unified(glm_quota) + ollama_quota + codex_quota + claude_quota + antigravity_quota + grok_quota + cursor_quota
+    glm_quota, quotas = collect_quotas()
 
     print("Loading Claude Code data...")
     start_d = datetime.strptime(start_date, '%Y-%m-%d').date()
@@ -2361,7 +2387,39 @@ def build_latest_dashboard_payload(days: int = 30, *, no_cost: bool = False, ski
     # DSH zai/glm-* joins the GLM bucket: the Z.ai monitor API does not see
     # DSH-routed calls, so this adds usage the API bucket cannot double count.
     glm_combined = merge_daily_tokens(glm, glm_opencode, dsh_buckets['glm_opencode'])
-    return generate_dashboard(cursor, glm_combined, gemini, dict(claude_combined), gpt_combined, opencode_deepseek, opencode_grok, opencode_qwen, opencode_other, start_date, end_date, daily_costs, daily_active_seconds=daily_active_seconds, skip_desktop_chart=skip_desktop_chart, glm_quota=glm_quota, quotas=quotas)
+    payload = generate_dashboard(cursor, glm_combined, gemini, dict(claude_combined), gpt_combined, opencode_deepseek, opencode_grok, opencode_qwen, opencode_other, start_date, end_date, daily_costs, daily_active_seconds=daily_active_seconds, skip_desktop_chart=skip_desktop_chart, glm_quota=glm_quota, quotas=quotas)
+    if record:
+        record_history(payload)
+    return payload
+
+
+def record_history(payload: Mapping[str, object], *, source: str = 'dashboard') -> None:
+    """Persist this run's quota bars and daily token rows to the history DB.
+
+    Best-effort: the dashboard's job is to render, not to be a database
+    client, so any history failure is logged and swallowed. The two writes are
+    independent — a failure recording quota samples must not skip the daily
+    usage rows, so each is guarded on its own.
+    """
+    quota_written = 0
+    usage_written = 0
+    try:
+        quota_written = history_store.record_quota_snapshots(
+            cast(Sequence[Mapping[str, Any]], payload.get('quotas') or []),
+            source=source,
+        )
+    except Exception as e:  # noqa: BLE001 - history must never break a dashboard run
+        print(f"Quota history record skipped: {e}", file=sys.stderr)
+    try:
+        usage_written = history_store.record_usage_daily(
+            cast(Sequence[Mapping[str, Any]], payload.get('daily') or []),
+            source=source,
+        )
+    except Exception as e:  # noqa: BLE001 - history must never break a dashboard run
+        print(f"Usage history record skipped: {e}", file=sys.stderr)
+    if quota_written or usage_written:
+        print(f"History: {quota_written} quota sample(s), {usage_written} daily row(s) recorded.")
+
 
 def _load_cursor_detailed(path=None) -> dict[date, dict[str, dict[str, int]]]:
     """Load per-model per-day token breakdown from Cursor CSV export."""
@@ -2580,7 +2638,7 @@ def main():
     else:
         days = args.days
 
-    build_latest_dashboard_payload(days=days, no_cost=args.no_cost, skip_desktop_chart=args.skip_desktop_chart)
+    build_latest_dashboard_payload(days=days, no_cost=args.no_cost, skip_desktop_chart=args.skip_desktop_chart, record=True)
 
 if __name__ == '__main__':
     main()

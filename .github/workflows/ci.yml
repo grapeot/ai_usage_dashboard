@@ -34,7 +34,7 @@ jobs:
         run: .venv/bin/python -c "import tomllib; tomllib.load(open('pyproject.toml','rb'))"
 
       - name: Verify private artifacts are ignored
-        run: git check-ignore .env token_usage_eink.json token_usage_dashboard.png usage.json cursor.csv glm.json update.log eink/e1002/secrets.h
+        run: git check-ignore .env token_usage_eink.json token_usage_dashboard.png usage.json cursor.csv glm.json quota_history.db quota_history.db-wal quota_history.db-shm update.log eink/e1002/secrets.h
 
       - name: Scan tracked files for private values
         run: |

@@ -65,6 +65,8 @@ Default endpoints:
 - `http://127.0.0.1:7995/health`
 - `http://127.0.0.1:7995/token_usage.json`
 - `http://127.0.0.1:7995/api/v1/quotas`
+- `http://127.0.0.1:7995/api/v1/quota-history`
+- `http://127.0.0.1:7995/api/v1/usage-history`
 - `http://127.0.0.1:7995/api/v1/model-breakdown`
 - `http://127.0.0.1:7995/api/v1/display/update`
 
@@ -72,6 +74,11 @@ Default endpoints:
 provider window's used and remaining percentages plus reset timestamps, without
 forcing a provider refresh. Call `POST /api/v1/display/update` first when fresh
 provider data is required.
+
+`GET /api/v1/quota-history` returns the quota bar time series from the local
+history database (see below). Query params: `provider`, `label`, and `days`.
+`GET /api/v1/usage-history` returns the per-day aggregate rows; query param
+`days`.
 
 `GET /api/v1/model-breakdown` returns per-model token usage (input, output,
 cache_read, cache_write, total) across all data sources, sorted by total tokens
@@ -86,6 +93,36 @@ Full refreshes are serialized inside the API process because collection updates
 shared cache files. If multiple clients call `POST /api/v1/display/update` at the
 same time, later requests wait for the active refresh before running. Cached GET
 requests remain read-only and do not acquire the refresh lock.
+
+## Quota & Usage History
+
+The dashboard overwrites `token_usage_eink.json` on every run, so the previous
+snapshot is lost. `history_store.py` adds the missing temporal dimension in a
+local, gitignored SQLite database (`quota_history.db`, override with
+`AI_USAGE_HISTORY_DB`):
+
+- `quota_samples` — a time series of provider quota bars. One row is written on
+  every observation (no dedup, no retention policy yet), so the table records
+  how long each percentage stayed flat as well as its changes. The reset
+  timestamp is normalized to the minute so provider jitter ("now + TTL"
+  recomputed per request) cannot masquerade as a window change. This is the
+  primary signal: quota bars are live readings that cannot be rebuilt from any
+  source database once a window rolls over.
+- `usage_daily` — the dashboard's per-day aggregate token/cost rows, UPSERTed by
+  date. Secondary, because token volume is rebuildable from the sources.
+
+Both are written best-effort from `auto_usage.record_history()`; a history
+failure is logged and swallowed so it can never break a dashboard run.
+
+History is written only on a genuine refresh. `build_latest_dashboard_payload`
+is a pure read by default (`record=False`); the refresh paths
+(`auto_usage.py` CLI and `POST /api/v1/display/update`) pass `record=True`, while
+read-only paths (a cold cache hit on `GET /token_usage.json`, `GET /api/v1/quotas`)
+never touch the database. This keeps a pure read from manufacturing a sample.
+
+The writer is the E1002 firmware: it wakes hourly and POSTs
+`/api/v1/display/update`, which runs the full build and records a sample.
+
 
 If a LAN device needs access, configure the host through private local config or your own launch script. Do not commit fixed private IP addresses.
 

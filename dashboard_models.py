@@ -115,6 +115,51 @@ class QuotasResponse(BaseModel):
     quotas: list[AutomationQuotaSnapshot] = Field(default_factory=list, description='Current quota windows across all available providers.')
 
 
+class QuotaSample(BaseModel):
+    """One observed read of a provider quota window, stored in the history DB."""
+
+    observed_at: str = Field(description='Local ISO timestamp when this reading was captured.')
+    provider: str = Field(description='Provider name, e.g. ollama, codex, claude.')
+    label: str = Field(description='Quota window label, e.g. 5h, 7d.')
+    percentage: float = Field(description='Percentage of the window used at capture time (0-100).')
+    reset_iso: Optional[str] = Field(default=None, description='Local ISO reset time of the window this reading belongs to, derived from the normalized reset_ms.')
+    reset_ms: Optional[int] = Field(default=None, description='Epoch-millisecond reset time of the window this reading belongs to, normalized to the minute to absorb provider jitter.')
+    usage: Optional[int] = Field(default=None, description='Absolute usage when the provider exposes it.')
+    remaining: Optional[int] = Field(default=None, description='Absolute remaining amount when the provider exposes it.')
+    source: Optional[str] = Field(default=None, description='Writer of this sample, e.g. "dashboard" (full build driven by the E1002 hourly refresh).')
+
+
+class QuotaHistoryResponse(BaseModel):
+    """Time series of quota readings from the history database.
+
+    A row is stored on every observation (no dedup, no retention policy yet),
+    so a flat window appears as repeated points and the series carries how long
+    a percentage stayed flat. Reset timestamps are normalized to the minute so
+    provider jitter cannot masquerade as a window change.
+    """
+
+    generated_at: Optional[str] = Field(default=None, description='Generation time of this response in local ISO format.')
+    samples: list[QuotaSample] = Field(default_factory=list, description='Quota samples ordered by observation time.')
+
+
+class UsageDailyRow(BaseModel):
+    """One per-day aggregate usage row from the history database."""
+
+    date: str = Field(description='Calendar date, YYYY-MM-DD.')
+    source: Optional[str] = Field(default=None, description='Writer of this row.')
+    updated_at: Optional[str] = Field(default=None, description='Local ISO timestamp when this row was last upserted.')
+    total_tokens: int = Field(default=0, description='Total tokens across all providers for this day.')
+    cost_usd: Optional[float] = Field(default=None, description='Estimated API-equivalent USD cost for this day.')
+    ai_hours: float = Field(default=0.0, description='Estimated AI active time for this day in hours.')
+
+
+class UsageHistoryResponse(BaseModel):
+    """Per-day aggregate usage history from the history database."""
+
+    generated_at: Optional[str] = Field(default=None, description='Generation time of this response in local ISO format.')
+    days: list[UsageDailyRow] = Field(default_factory=list, description='Per-day usage rows ordered by date.')
+
+
 class DashboardPayload(BaseModel):
     """Full dashboard payload served by the local API and written to token_usage_eink.json."""
 
