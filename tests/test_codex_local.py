@@ -1,6 +1,6 @@
 import json
 import sys
-from datetime import date
+from datetime import date, datetime, timedelta
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
@@ -14,6 +14,19 @@ from codex_local import (
 )
 from pricing_config import get_pricing
 
+# Fixture timestamps are UTC; events group by LOCAL date, so derive the
+# expected day from the timestamp rather than hard-coding it, to keep these
+# tests timezone-independent (CI runs UTC, the author runs PST).
+_TURN_TS = '2026-03-20T10:00:00.000Z'
+_TOKEN_TS = '2026-03-20T10:00:05.000Z'
+
+
+def _local_day(ts: str) -> date:
+    return datetime.fromisoformat(ts.replace('Z', '+00:00')).astimezone().date()
+
+
+DAY = _local_day(_TOKEN_TS)
+
 
 def _write_session(root: Path, day: str, name: str, events: list[dict]) -> Path:
     y, m, d = day.split('-')
@@ -25,11 +38,11 @@ def _write_session(root: Path, day: str, name: str, events: list[dict]) -> Path:
 
 
 def _turn(model: str) -> dict:
-    return {'timestamp': '2026-03-20T10:00:00.000Z', 'type': 'turn_context', 'payload': {'model': model}}
+    return {'timestamp': _TURN_TS, 'type': 'turn_context', 'payload': {'model': model}}
 
 
 def _token_count(input_tokens: int, cached: int, output: int, reasoning: int = 0, cache_write: int = 0,
-                 cumulative: int | None = None, timestamp: str = '2026-03-20T10:00:05.000Z') -> dict:
+                 cumulative: int | None = None, timestamp: str = _TOKEN_TS) -> dict:
     return {
         'timestamp': timestamp,
         'type': 'event_msg',
@@ -60,30 +73,29 @@ def test_iter_session_files_filters_by_filename_date(tmp_path):
 def test_iter_session_files_keeps_earlier_file_that_spills_into_window(tmp_path):
     # A session that started before the window can append events inside it, so
     # its (earlier) filename must NOT be dropped by a start-date prefilter.
-    # The event timestamp is chosen so it lands on 2026-03-20 in local time.
     sessions = tmp_path / 'sessions'
     _write_session(sessions, '2026-03-18', 'rollout-2026-03-18T23-00-00-abc.jsonl', [
         _turn('gpt-5-codex'),
-        _token_count(100, 0, 10, timestamp='2026-03-20T20:00:00.000Z'),
+        _token_count(100, 0, 10),
     ])
-    found = list(iter_session_files(sessions_dir=sessions, archive_dir=tmp_path / 'none', start_date=date(2026, 3, 20), end_date=date(2026, 3, 20)))
+    found = list(iter_session_files(sessions_dir=sessions, archive_dir=tmp_path / 'none', start_date=DAY, end_date=DAY))
     assert len(found) == 1
-    assert load_daily(sessions_dir=sessions, archive_dir=tmp_path / 'none', start_date=date(2026, 3, 20), end_date=date(2026, 3, 20)) == {date(2026, 3, 20): 110}
+    assert load_daily(sessions_dir=sessions, archive_dir=tmp_path / 'none', start_date=DAY, end_date=DAY) == {DAY: 110}
 
 
 def test_result_is_independent_of_end_date(tmp_path):
-    # A file named at end_date+1 (UTC) can hold events on end_date (local). The
-    # result for a day must not change when the window's end is extended.
+    # A session's filename date is its start in UTC, but events group by LOCAL
+    # date. Extending the window's end must never change a day's total.
     sessions = tmp_path / 'sessions'
-    # Filename 2026-03-21 (UTC) but event at 2026-03-21T03:00Z = 2026-03-20 local.
+    # Name the file one day after DAY's UTC-ish date to exercise the allowance.
     _write_session(sessions, '2026-03-21', 'rollout-2026-03-21T03-00-00-abc.jsonl', [
         _turn('gpt-5-codex'),
-        _token_count(100, 0, 10, timestamp='2026-03-21T03:00:00.000Z'),
+        _token_count(100, 0, 10),
     ])
-    day = date(2026, 3, 20)
-    one_day = load_daily(sessions_dir=sessions, archive_dir=tmp_path / 'none', start_date=day, end_date=day)
-    two_day = load_daily(sessions_dir=sessions, archive_dir=tmp_path / 'none', start_date=day, end_date=date(2026, 3, 21))
-    assert one_day == two_day == {day: 110}
+    one_day = load_daily(sessions_dir=sessions, archive_dir=tmp_path / 'none', start_date=DAY, end_date=DAY)
+    two_day = load_daily(sessions_dir=sessions, archive_dir=tmp_path / 'none', start_date=DAY, end_date=DAY + timedelta(days=1))
+    assert DAY in one_day and one_day[DAY] == 110
+    assert one_day == two_day
 
 
 def test_duplicate_token_count_events_are_skipped(tmp_path):
@@ -99,7 +111,7 @@ def test_duplicate_token_count_events_are_skipped(tmp_path):
     detailed = load_detailed(sessions_dir=sessions, archive_dir=tmp_path / 'none')
     # first sample only contributes (400 non-cached + 600 cached + 100 out),
     # plus the advanced sample (1000 + 1000 + 200)
-    assert detailed[date(2026, 3, 20)]['gpt-5-codex'] == {'input': 1400, 'output': 300, 'cache_read': 1600, 'cache_write': 0}
+    assert detailed[DAY]['gpt-5-codex'] == {'input': 1400, 'output': 300, 'cache_read': 1600, 'cache_write': 0}
 
 
 def test_non_cached_input_is_total_minus_cached(tmp_path):
@@ -110,7 +122,7 @@ def test_non_cached_input_is_total_minus_cached(tmp_path):
         _token_count(input_tokens=1000, cached=800, output=50),
     ])
     detailed = load_detailed(sessions_dir=sessions, archive_dir=tmp_path / 'none')
-    assert detailed[date(2026, 3, 20)]['gpt-5-codex'] == {'input': 200, 'output': 50, 'cache_read': 800, 'cache_write': 0}
+    assert detailed[DAY]['gpt-5-codex'] == {'input': 200, 'output': 50, 'cache_read': 800, 'cache_write': 0}
 
 
 def test_reasoning_folds_into_output(tmp_path):
@@ -120,7 +132,7 @@ def test_reasoning_folds_into_output(tmp_path):
         _token_count(input_tokens=100, cached=0, output=50, reasoning=25),
     ])
     detailed = load_detailed(sessions_dir=sessions, archive_dir=tmp_path / 'none')
-    assert detailed[date(2026, 3, 20)]['gpt-5-codex']['output'] == 75
+    assert detailed[DAY]['gpt-5-codex']['output'] == 75
 
 
 def test_model_follows_most_recent_turn_context(tmp_path):
@@ -132,7 +144,7 @@ def test_model_follows_most_recent_turn_context(tmp_path):
         _token_count(200, 0, 20),
     ])
     detailed = load_detailed(sessions_dir=sessions, archive_dir=tmp_path / 'none')
-    day = detailed[date(2026, 3, 20)]
+    day = detailed[DAY]
     assert day['gpt-5-codex']['input'] == 100
     assert day['glm-5.3-flash']['input'] == 200
 
@@ -144,7 +156,7 @@ def test_load_daily_sums_all_parts(tmp_path):
         _token_count(input_tokens=1000, cached=600, output=100),
     ])
     # 400 non-cached + 600 cached + 100 output = 1100
-    assert load_daily(sessions_dir=sessions, archive_dir=tmp_path / 'none') == {date(2026, 3, 20): 1100}
+    assert load_daily(sessions_dir=sessions, archive_dir=tmp_path / 'none') == {DAY: 1100}
 
 
 def test_cost_matches_canonical_rates(tmp_path):
@@ -154,7 +166,7 @@ def test_cost_matches_canonical_rates(tmp_path):
         _token_count(input_tokens=1_000_000, cached=400_000, output=100_000),
     ])
     detailed = load_detailed(sessions_dir=sessions, archive_dir=tmp_path / 'none')
-    cost = calc_cost(detailed)[date(2026, 3, 20)]
+    cost = calc_cost(detailed)[DAY]
     p = get_pricing('gpt-5.3-codex')
     expected = (
         600_000 * p['input'] / 1e6
@@ -170,7 +182,7 @@ def test_usage_events_before_any_turn_context_use_unknown(tmp_path):
         _token_count(100, 0, 10),
     ])
     detailed = load_detailed(sessions_dir=sessions, archive_dir=tmp_path / 'none')
-    assert 'unknown' in detailed[date(2026, 3, 20)]
+    assert 'unknown' in detailed[DAY]
 
 
 def test_torn_and_malformed_lines_are_skipped(tmp_path):
