@@ -28,6 +28,8 @@ All commands run from the repo root.
 .venv/bin/python auto_usage.py -d 7
 .venv/bin/python auto_usage.py -d 30 --skip-desktop-chart
 .venv/bin/python auto_usage.py -d 7 --no-cost
+.venv/bin/python -m history_store --provider ollama --days 7
+.venv/bin/python -m history_store --usage --days 30
 .venv/bin/python opencode_token_analyzer.py --provider anthropic --hours 5
 .venv/bin/python -m uvicorn local_display_service:app --host 127.0.0.1 --port 7995
 ```
@@ -64,8 +66,31 @@ It may write local artifacts:
 - `token_usage_dashboard.png`: desktop chart, local/private generated output.
 - `token_usage_eink.json`: E1002 display payload, local/private generated output.
 - `usage.json`, `cursor.csv`, `glm.json`, `glm_quota.json`, `ollama_settings.html`, `cursor_usage_summary.json`: raw provider exports, local/private generated output.
+- `quota_history.db`: append-only SQLite history of quota readings and per-day usage (see below).
 
 These files are intentionally gitignored.
+
+## Quota & Usage History
+
+The dashboard overwrites `token_usage_eink.json` on every run, so the previous snapshot is lost. `history_store.py` persists the temporal dimension to a local, gitignored SQLite database (`quota_history.db`, override with `AI_USAGE_HISTORY_DB`):
+
+- `quota_samples` — a time series of provider quota bars. One row is written on every observation (no dedup, no retention policy yet), so the table records how long each percentage stayed flat. The reset timestamp is normalized to the minute so provider jitter (`now + TTL` recomputed per request) cannot look like a window change. This is the primary signal: quota bars are live readings scraped from provider pages and cannot be rebuilt from any source database once a window rolls over.
+- `usage_daily` — the dashboard's per-day aggregate token/cost rows, UPSERTed by date. Secondary, because token volume is always rebuildable from the source databases.
+
+Both are written best-effort from `auto_usage.record_history()`; a history failure is logged and swallowed so it can never break a dashboard run.
+
+History is written only on a genuine refresh. `build_latest_dashboard_payload` is a pure read by default (`record=False`); the refresh paths (`auto_usage.py` CLI and `POST /api/v1/display/update`) pass `record=True`, while read-only paths (a cold cache hit on `GET /token_usage.json`, `GET /api/v1/quotas`) never touch the database, so a pure read cannot manufacture a sample.
+
+The writer is the E1002 firmware: it wakes hourly and POSTs `/api/v1/display/update`, which runs the full build and records a sample. No separate scheduled sampler exists.
+
+Query the history from the CLI or the API:
+
+```bash
+.venv/bin/python -m history_store --provider ollama --days 7
+.venv/bin/python -m history_store --usage --days 30
+curl -s 'http://127.0.0.1:7995/api/v1/quota-history?provider=ollama&days=7'
+curl -s 'http://127.0.0.1:7995/api/v1/usage-history?days=30'
+```
 
 ## Local Display Service
 

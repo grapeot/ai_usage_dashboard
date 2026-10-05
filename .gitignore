@@ -17,6 +17,9 @@ glm.json
 glm_quota.json
 ollama_settings.html
 cursor_usage_summary.json
+quota_history.db
+quota_history.db-wal
+quota_history.db-shm
 token_usage_dashboard.png
 token_usage_epaper.png
 token_usage_eink.json

@@ -14,9 +14,12 @@ from dashboard_models import (
     DashboardPayload,
     HealthResponse,
     ModelBreakdownResponse,
+    QuotaHistoryResponse,
     QuotasResponse,
     UpdateRequest,
+    UsageHistoryResponse,
 )
+import history_store
 
 app = FastAPI(
     title="ai_usage_dashboard",
@@ -52,8 +55,13 @@ def read_cached_payload() -> dict[str, Any]:
     return _cached_payload
 
 
-def generate_latest_payload() -> dict[str, Any]:
-    return build_latest_dashboard_payload(days=30, no_cost=False, skip_desktop_chart=True)
+def generate_latest_payload(*, record: bool = False) -> dict[str, Any]:
+    """Build the dashboard payload.
+
+    ``record=False`` (default) is a pure read and never touches the history DB.
+    Only a genuine refresh passes ``record=True`` so a sample is persisted.
+    """
+    return build_latest_dashboard_payload(days=30, no_cost=False, skip_desktop_chart=True, record=record)
 
 
 @app.get(
@@ -114,6 +122,33 @@ def quotas() -> dict[str, Any]:
 
 
 @app.get(
+    "/api/v1/quota-history",
+    response_model=QuotaHistoryResponse,
+    summary="Return the quota bar time series",
+    description="Returns deduplicated quota readings from the history database. A sample is stored only when a window's percentage or reset time changes, so a flat window is one point and a window rollover shows up as a sample with a new reset time. Optionally filter by provider, window label, and a trailing day count.",
+)
+def quota_history(provider: str | None = None, label: str | None = None, days: int | None = None) -> dict[str, Any]:
+    samples = history_store.quota_history(provider=provider, label=label, days=days)
+    return {
+        "generated_at": datetime.now(ZoneInfo("America/Los_Angeles")).replace(tzinfo=None).isoformat(timespec="seconds"),
+        "samples": samples,
+    }
+
+
+@app.get(
+    "/api/v1/usage-history",
+    response_model=UsageHistoryResponse,
+    summary="Return per-day aggregate usage history",
+    description="Returns the dashboard's per-day aggregate token/cost rows from the history database, upserted by date. Secondary to quota history because token volume is rebuildable from source databases.",
+)
+def usage_history(days: int | None = None) -> dict[str, Any]:
+    return {
+        "generated_at": datetime.now(ZoneInfo("America/Los_Angeles")).replace(tzinfo=None).isoformat(timespec="seconds"),
+        "days": history_store.usage_history(days=days),
+    }
+
+
+@app.get(
     "/api/v1/model-breakdown",
     response_model=ModelBreakdownResponse,
     summary="Return per-model token usage breakdown",
@@ -136,7 +171,7 @@ def display_update(request: UpdateRequest) -> dict[str, Any]:
     # Collection writes shared cache files, so refreshes must not overlap.
     with _refresh_lock:
         try:
-            _cached_payload = generate_latest_payload()
+            _cached_payload = generate_latest_payload(record=True)
         except Exception:
             if _cached_payload is not None:
                 return _cached_payload

@@ -55,11 +55,13 @@ def test_get_token_usage_json_returns_dashboard_shape(monkeypatch):
         "summary": {"total_tokens": 1},
         "daily": [],
     }
+    calls = []
     monkeypatch.setattr(local_display_service, "_cached_payload", None)
-    monkeypatch.setattr(local_display_service, "generate_latest_payload", lambda: payload)
+    monkeypatch.setattr(local_display_service, "generate_latest_payload", lambda **kw: calls.append(kw) or payload)
 
     client = TestClient(local_display_service.app)
     response = client.get("/token_usage.json")
+    assert all(kw.get("record") is not True for kw in calls)  # a pure read must not write history
 
     assert response.status_code == 200
     body = response.json()
@@ -179,8 +181,9 @@ def test_post_update_returns_fresh_dashboard_shape(monkeypatch):
         "summary": {"total_tokens": 42},
         "daily": [{"date": "2026-04-01", "total_tokens": 42}],
     }
+    calls = []
     monkeypatch.setattr(local_display_service, "_cached_payload", None)
-    monkeypatch.setattr(local_display_service, "generate_latest_payload", lambda: payload)
+    monkeypatch.setattr(local_display_service, "generate_latest_payload", lambda **kw: calls.append(kw) or payload)
 
     client = TestClient(local_display_service.app)
     response = client.post(
@@ -194,6 +197,7 @@ def test_post_update_returns_fresh_dashboard_shape(monkeypatch):
     assert body["summary"]["total_tokens"] == 42
     assert body["daily"][0]["date"] == "2026-04-01"
     assert body["daily"][0]["total_tokens"] == 42
+    assert calls == [{"record": True}]  # a refresh must persist a history sample
 
 
 def test_post_update_serializes_concurrent_refreshes(monkeypatch):
@@ -204,7 +208,7 @@ def test_post_update_serializes_concurrent_refreshes(monkeypatch):
     max_active = 0
     call_count = 0
 
-    def generate():
+    def generate(**kwargs):
         nonlocal active, max_active, call_count
         with state_lock:
             active += 1
@@ -447,3 +451,48 @@ def test_model_breakdown_null_fields_for_total_only_sources(monkeypatch):
     assert model["totals"]["input"] is None
     assert model["totals"]["output"] is None
     assert model["totals"]["total"] == 500
+
+
+def test_get_quota_history_endpoint_returns_samples(monkeypatch):
+    monkeypatch.setattr(local_display_service.history_store, "quota_history", lambda provider=None, label=None, days=None: [
+        {
+            "observed_at": "2026-10-05T09:00:00",
+            "provider": "ollama",
+            "label": "7d",
+            "percentage": 2.5,
+            "reset_iso": "2026-10-12T00:00",
+            "reset_ms": 123,
+            "usage": None,
+            "remaining": None,
+            "source": "dashboard",
+        }
+    ])
+
+    response = TestClient(local_display_service.app).get("/api/v1/quota-history?provider=ollama")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["samples"][0]["provider"] == "ollama"
+    assert body["samples"][0]["percentage"] == 2.5
+    assert body["samples"][0]["source"] == "dashboard"
+
+
+def test_get_usage_history_endpoint_returns_days(monkeypatch):
+    monkeypatch.setattr(local_display_service.history_store, "usage_history", lambda days=None: [
+        {"date": "2026-10-05", "source": "dashboard", "updated_at": "2026-10-05T09:00:00",
+         "total_tokens": 105, "cost_usd": 1.5, "ai_hours": 2.0}
+    ])
+
+    response = TestClient(local_display_service.app).get("/api/v1/usage-history")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["days"][0]["date"] == "2026-10-05"
+    assert body["days"][0]["total_tokens"] == 105
+
+
+def test_history_endpoints_have_typed_openapi_response():
+    schema = TestClient(local_display_service.app).get("/openapi.json").json()
+    for path, model in [("/api/v1/quota-history", "QuotaHistoryResponse"), ("/api/v1/usage-history", "UsageHistoryResponse")]:
+        response_schema = schema["paths"][path]["get"]["responses"]["200"]["content"]["application/json"]["schema"]
+        assert response_schema == {"$ref": f"#/components/schemas/{model}"}
