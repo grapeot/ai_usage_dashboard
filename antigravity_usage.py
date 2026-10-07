@@ -675,6 +675,20 @@ def load_detailed(
     return {entry_date: dict(models) for entry_date, models in daily_models.items()}
 
 
+def resolve_pricing(
+    model_id: str,
+    *,
+    pricing_lookup: Callable[[str], dict | None] = get_pricing,
+) -> dict | None:
+    """Resolve Antigravity prices consistently for daily and window usage."""
+    pricing = pricing_lookup(model_id) or pricing_lookup(f'antigravity-{model_id}')
+    # Unresolved Gemini variants and placeholders use the dashboard fallback.
+    lowered = (model_id or '').lower()
+    if not pricing and ('gemini' in lowered or 'placeholder' in lowered):
+        pricing = pricing_lookup('gemini-3-flash')
+    return pricing
+
+
 def calculate_cost(
     detailed: dict[date, dict[str, dict[str, int]]],
     *,
@@ -684,15 +698,7 @@ def calculate_cost(
     result: defaultdict[date, float] = defaultdict(float)
     for entry_date, models in detailed.items():
         for model_id, tokens in models.items():
-            pricing = pricing_lookup(model_id) or pricing_lookup(
-                f'antigravity-{model_id}'
-            )
-            # Unresolved Antigravity ids (gemini-* variants, unknown
-            # model_placeholder_*) classify as Gemini; price them at the
-            # gemini-3-flash fallback rather than dropping to $0.
-            lowered = (model_id or '').lower()
-            if not pricing and ('gemini' in lowered or 'placeholder' in lowered):
-                pricing = pricing_lookup('gemini-3-flash')
+            pricing = resolve_pricing(model_id, pricing_lookup=pricing_lookup)
             if not pricing:
                 continue
             result[entry_date] += cost_calculator(

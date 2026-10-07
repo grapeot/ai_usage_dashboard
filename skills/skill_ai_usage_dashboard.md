@@ -28,6 +28,8 @@ All commands run from the repo root.
 .venv/bin/python auto_usage.py -d 7
 .venv/bin/python auto_usage.py -d 30 --skip-desktop-chart
 .venv/bin/python auto_usage.py -d 7 --no-cost
+.venv/bin/python auto_usage.py --from 2026-10-05T09:00 --to 2026-10-05T18:00
+.venv/bin/python auto_usage.py --from 2026-10-05 --provider deepseek
 .venv/bin/python -m history_store --provider ollama --days 7
 .venv/bin/python -m history_store --usage --days 30
 .venv/bin/python opencode_token_analyzer.py --provider anthropic --hours 5
@@ -69,6 +71,21 @@ It may write local artifacts:
 - `quota_history.db`: append-only SQLite history of quota readings and per-day usage (see below).
 
 These files are intentionally gitignored.
+
+## Exact-Range Aggregation
+
+`auto_usage.py --from <bound> --to <bound>` aggregates usage over an exact
+`[from, to)` interval using local event timestamps, instead of calendar days.
+This is the tool for aligning a quota-bar window with actual usage (e.g. "how
+many tokens did DeepSeek use between 14:00 and 18:00?"). Bounds accept a full
+ISO datetime or a bare date (local midnight); a bare `--from` with no `--to`
+means that whole day. `--provider <bucket>` filters to one provider.
+
+Every local source (OpenCode, DSH, Claude Code, Codex, Antigravity) is
+timestamp-precise; Cursor depends on a recent cloud CSV export. A full-day
+window equals the dashboard's day row (same tokens and cost): cost uses the
+canonical split and the same provider basis (Cursor tokens are counted but not
+priced, matching the dashboard).
 
 ## Quota & Usage History
 
