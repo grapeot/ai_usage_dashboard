@@ -54,7 +54,7 @@ DEFAULT_CODEX_ARCHIVE_DIR = Path.home() / '.codex' / 'archived_sessions'
 DailyTokens = dict[date, int]
 
 
-class CodexUsageRecord(TypedDict):
+class CodexUsageRecord(TypedDict, total=False):
     """One per-turn usage delta attributed to a timestamp and model."""
 
     time: datetime
@@ -63,6 +63,8 @@ class CodexUsageRecord(TypedDict):
     input_cached: int
     output: int
     cache_write: int
+    billing_provider: str
+    record_id: str
 
 
 def _event_time(raw: dict) -> datetime | None:
@@ -144,6 +146,7 @@ def parse_session_file(path: Path) -> tuple[str, list[CodexUsageRecord]]:
     summing them overcounts by billions of tokens.)
     """
     model = 'unknown'
+    billing_provider = None
     session_id = ''
     records: list[CodexUsageRecord] = []
     prev_cumulative_total: int | None = None
@@ -166,11 +169,17 @@ def parse_session_file(path: Path) -> tuple[str, list[CodexUsageRecord]]:
                     sid = payload.get('session_id') or payload.get('id')
                     if isinstance(sid, str):
                         session_id = sid
+                    provider = payload.get('model_provider')
+                    if isinstance(provider, str):
+                        billing_provider = provider.replace('_', '-')
                     continue
                 if raw.get('type') == 'turn_context':
                     m = payload.get('model')
                     if isinstance(m, str) and m:
                         model = m
+                    provider = payload.get('model_provider')
+                    if isinstance(provider, str):
+                        billing_provider = provider.replace('_', '-')
                     continue
                 if payload.get('type') != 'token_count':
                     continue
@@ -200,6 +209,8 @@ def parse_session_file(path: Path) -> tuple[str, list[CodexUsageRecord]]:
                     'input_cached': cached_input,
                     'output': int(usage.get('output_tokens', 0) or 0) + int(usage.get('reasoning_output_tokens', 0) or 0),
                     'cache_write': int(usage.get('cache_write_input_tokens', 0) or 0),
+                    **({'billing_provider': billing_provider} if billing_provider else {}),
+                    **({'record_id': f'{session_id}:{len(records)}'} if session_id else {}),
                 })
     except OSError:
         return session_id, []

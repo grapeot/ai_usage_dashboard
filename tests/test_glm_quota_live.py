@@ -35,7 +35,7 @@ def test_export_glm_quota_returns_success_and_normalizes(monkeypatch, tmp_path):
     assert len(snapshots) >= 1
     for snapshot in snapshots:
         assert snapshot['label']
-        assert isinstance(snapshot['percentage'], int)
+        assert isinstance(snapshot['percentage'], float)
         assert snapshot['next_reset_time_ms'] is None or isinstance(snapshot['next_reset_time_ms'], int)
 
 

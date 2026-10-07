@@ -34,12 +34,17 @@ py-modules = [
     "codex_usage",
     "dashboard_models",
     "display_contract",
+    "dsh_usage",
     "eink_simulator",
     "firmware_logic",
     "history_store",
+    "grok_usage",
     "local_display_service",
     "opencode_token_analyzer",
     "pricing_config",
+    "plan_sources",
+    "plan_usage",
+    "quota_capture",
     "window_usage",
 ]
 

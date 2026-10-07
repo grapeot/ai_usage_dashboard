@@ -68,13 +68,32 @@ class GlmQuotaUsageDetail(BaseModel):
     usage: Optional[int] = Field(default=None, description='Count consumed by this model/tool in the current window.')
 
 
-class GlmQuotaSnapshot(BaseModel):
+class ModelQuotaReading(BaseModel):
+    model_id: str
+    label: str
+    percentage: float
+    remaining_fraction: Optional[float] = None
+    next_reset_iso: Optional[str] = None
+
+
+class QuotaCaptureMetadata(BaseModel):
+    observed_at: Optional[str] = Field(default=None, description='Provider capture time, distinct from history insertion time.')
+    measurement_source: Optional[str] = Field(default=None, description='Reading provenance: live, cache, or local_log. Missing on legacy samples.')
+    percentage_resolution: Optional[float] = Field(default=None, description='Resolution of the upstream percentage reading, in percentage points, when known.')
+    pool_id: Optional[str] = Field(default=None, description='Provider quota pool identifier; the window label identifies its duration.')
+    account_fingerprint: Optional[str] = Field(default=None, description='Opaque fingerprint of a stable account identity when available. Never a credential.')
+    quota_scope: Optional[str] = Field(default=None, description='Scope of the reading; family_max is a display aggregate, not an independent billing pool.')
+    model_quotas: Optional[list[ModelQuotaReading]] = Field(default=None, description='Unrounded per-model quota readings behind a display aggregate.')
+    absolute_limit_usd: Optional[float] = Field(default=None, description='Known upstream dollar limit, only supplied when its currency and pool scope are established.')
+
+
+class GlmQuotaSnapshot(QuotaCaptureMetadata):
     """One rolling quota window for the Z.ai coding plan."""
 
     label: str = Field(description='Human-readable window label, e.g. "5 Hours Quota", "Weekly Quota", "Monthly Web Search / Reader / Zread Quota". Falls back to "<type> unit=<unit>" for unknown window codes.')
     type: str = Field(description='Raw Z.ai limit type, e.g. TOKENS_LIMIT or TIME_LIMIT.')
     unit: int = Field(description='Raw Z.ai unit code identifying the window within its type.')
-    percentage: int = Field(default=0, description='Percentage of the window already used (0-100).')
+    percentage: float = Field(default=0, description='Percentage of the window already used (0-100).')
     next_reset_time_ms: Optional[int] = Field(default=None, description='Epoch-millisecond timestamp at which the window resets. May be absent.')
     next_reset_iso: Optional[str] = Field(default=None, description='Local ISO timestamp (seconds precision) at which the window resets. Derived from next_reset_time_ms.')
     usage: Optional[int] = Field(default=None, description='Absolute count already used. Present only for the monthly tool quota (TIME_LIMIT).')
@@ -83,25 +102,25 @@ class GlmQuotaSnapshot(BaseModel):
     usage_details: Optional[list[GlmQuotaUsageDetail]] = Field(default=None, description='Per-model usage breakdown. Present only for the monthly tool quota (TIME_LIMIT).')
 
 
-class QuotaSnapshot(BaseModel):
+class QuotaSnapshot(QuotaCaptureMetadata):
     """One rolling quota window for any provider (unified across GLM, Codex, Claude Code)."""
 
     provider: str = Field(description='Provider name, e.g. glm, codex, claude.')
     label: str = Field(description='Human-readable window label, e.g. "5 Hours", "Weekly", "5 Hours Quota".')
-    percentage: int = Field(default=0, description='Percentage of the window already used (0-100).')
+    percentage: float = Field(default=0, description='Percentage of the window already used (0-100).')
     next_reset_time_ms: Optional[int] = Field(default=None, description='Epoch-millisecond timestamp at which the window resets. May be absent.')
     next_reset_iso: Optional[str] = Field(default=None, description='Local ISO timestamp (seconds precision) at which the window resets. Derived from next_reset_time_ms.')
     usage: Optional[int] = Field(default=None, description='Absolute count already used. Present only for the GLM monthly tool quota.')
     remaining: Optional[int] = Field(default=None, description='Remaining count before the window resets. Present only for the GLM monthly tool quota.')
 
 
-class AutomationQuotaSnapshot(BaseModel):
+class AutomationQuotaSnapshot(QuotaCaptureMetadata):
     """Automation-oriented view of one provider quota window."""
 
     provider: str = Field(description='Provider name, e.g. glm, codex, ollama, claude, or antigravity.')
     label: str = Field(description='Human-readable quota window label, e.g. "5h", "7d", or "Gemini 5h".')
-    used_percentage: int = Field(description='Percentage of the quota window already used (0-100).')
-    remaining_percentage: int = Field(description='Percentage of the quota window remaining (0-100), calculated as 100 minus used_percentage.')
+    used_percentage: float = Field(description='Percentage of the quota window already used (0-100).')
+    remaining_percentage: float = Field(description='Percentage of the quota window remaining (0-100), calculated as 100 minus used_percentage.')
     next_reset_time_ms: Optional[int] = Field(default=None, description='Epoch-millisecond timestamp at which the quota window resets. May be absent.')
     next_reset_iso: Optional[str] = Field(default=None, description='Local ISO timestamp at which the quota window resets. May be absent.')
     usage: Optional[int] = Field(default=None, description='Absolute count already used when the upstream provider exposes it.')
@@ -115,7 +134,7 @@ class QuotasResponse(BaseModel):
     quotas: list[AutomationQuotaSnapshot] = Field(default_factory=list, description='Current quota windows across all available providers.')
 
 
-class QuotaSample(BaseModel):
+class QuotaSample(QuotaCaptureMetadata):
     """One observed read of a provider quota window, stored in the history DB."""
 
     observed_at: str = Field(description='Local ISO timestamp when this reading was captured.')
@@ -127,6 +146,8 @@ class QuotaSample(BaseModel):
     usage: Optional[int] = Field(default=None, description='Absolute usage when the provider exposes it.')
     remaining: Optional[int] = Field(default=None, description='Absolute remaining amount when the provider exposes it.')
     source: Optional[str] = Field(default=None, description='Writer of this sample, e.g. "dashboard" (full build driven by the E1002 hourly refresh).')
+    recorded_at: Optional[str] = Field(default=None, description='Time this observation was inserted into history.')
+    raw_reset_ms: Optional[int] = Field(default=None, description='Unnormalized upstream reset time, retained alongside the normalized window identity.')
 
 
 class QuotaHistoryResponse(BaseModel):

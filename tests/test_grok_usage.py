@@ -57,7 +57,7 @@ def test_parse_grok_credits_response_weekly_pool():
     body = _envelope(response)
 
     parsed = parse_grok_credits_response(body)
-    assert parsed['used_percentage'] == 12
+    assert parsed['used_percentage'] == 12.5
     assert parsed['period_label'] == 'Weekly'
     assert parsed['next_reset_time_ms'] == 1_785_829_649 * 1000
     assert parsed['product_usage'][0]['product'] == 2

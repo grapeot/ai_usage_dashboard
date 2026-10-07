@@ -87,6 +87,60 @@ window equals the dashboard's day row (same tokens and cost): cost uses the
 canonical split and the same provider basis (Cursor tokens are counted but not
 priced, matching the dashboard).
 
+## Plan Capacity Estimation
+
+Use `plan_usage` to estimate workload-dependent API-equivalent capacity for a
+subscription, rather than merely report dollars already consumed.
+
+```bash
+.venv/bin/python -m plan_usage --all-plans --days 7 --json
+.venv/bin/python -m plan_usage --plan ollama --window 7d --days 7 --json
+.venv/bin/python -m plan_usage --plan codex --window 7d --days 7 --json
+```
+
+Supported plans: `ollama`, `grok`, `codex`, `claude`, `antigravity`, `cursor`,
+`glm`. Use `--window` for a window kind or exact label, `--history-db` for a
+database override, and `--min-change` for the minimum percentage-point movement
+(default 3). Analysis reads existing history and local logs; it never refreshes
+providers, reads announcements, creates/migrates a database, or sends synthetic
+model prompts. If samples are needed, use the existing genuine dashboard
+refresh path when requested.
+
+An acceptable answer includes the actual measurement interval and coverage,
+sample count and movement, billing scope, explicit price basis, estimate and
+diagnostics. Use `plans[].windows` and `reset_events` as evidence. Report every
+selected plan's state, including unsupported or incomplete measurements.
+
+- **Billing scope:** Match actual subscription routes, not model or client
+  names. OpenCode OAuth and paid keys are distinct; Codex `model_provider` may
+  identify Ollama; Claude credentials and third-party overrides matter; Cursor
+  included and overage calls differ. Historical logs without identity metadata
+  rely on current routing assumptions, not a complete ledger audit.
+- **Pricing:** Ollama uses its model/time schedule; other plans use current API
+  reference prices; Cursor uses included-call charged cents. Missing prices
+  produce `unpriced_usage`, never a fabricated zero. `known_limit` requires an
+  explicit, correctly scoped `absolute_limit_usd`, not an untyped raw limit.
+- **Evidence:** Require three distinct snapshots and sufficient quota change.
+  Preserve fractions through parser/history/API; e-ink alone rounds. Do not
+  invent decimals for legacy readings or calibrate from cached/local-log
+  replays. Flat, saturated, missing, or incomplete data needs a diagnostic state.
+- **Resets:** For Codex, **the god of reset Tibo might interfere with the measurement**.
+  The program observes reset changes/counter drops, splits
+  segments, and knows only that early resets are possible. It neither consults
+  announcements nor identifies the cause. Never pair readings across a refill.
+- **Interpretation:** Endpoint bands describe rounding sensitivity, not
+  statistical confidence. Fit quality does not prove complete coverage or
+  future policy. Monthly equivalents assume ordinary weekly cadence without
+  extra resets; never extrapolate a five-hour burst limit into a month.
+
+Use `estimated` or `known_limit` only with their stated assumptions. Inspect
+`usage_missing` / `usage_incomplete`, `quota_scope_unresolved`, `saturated`,
+`quota_stale`, `quota_unavailable`, window-identity states, or
+`unstable_measurement` before making a capacity claim. Antigravity family
+maxima do not identify shared billing allocations; detected native Grok CLI
+activity is not covered by the token adapters. Genuine missing data is not $0
+capacity, and a meter that does not move is not an unlimited plan.
+
 ## Quota & Usage History
 
 The dashboard overwrites `token_usage_eink.json` on every run, so the previous snapshot is lost. `history_store.py` persists the temporal dimension to a local, gitignored SQLite database (`quota_history.db`, override with `AI_USAGE_HISTORY_DB`):

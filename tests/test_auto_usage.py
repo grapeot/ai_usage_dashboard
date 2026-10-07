@@ -1356,13 +1356,13 @@ def test_normalize_ollama_quota_parses_session_and_weekly():
     assert len(snapshots) == 2
     assert snapshots[0]['provider'] == 'ollama'
     assert snapshots[0]['label'] == '5h'
-    assert snapshots[0]['percentage'] == 47
+    assert snapshots[0]['percentage'] == 47.1
     # Reset time converted from UTC to local timezone (no trailing Z).
     iso = snapshots[0]['next_reset_iso']
     assert iso is not None
     assert 'Z' not in iso
     assert snapshots[1]['label'] == '7d'
-    assert snapshots[1]['percentage'] == 51
+    assert snapshots[1]['percentage'] == 51.1
     assert 'Z' not in (snapshots[1]['next_reset_iso'] or '')
 
 
@@ -1372,8 +1372,8 @@ def test_normalize_ollama_quota_does_not_double_count_aria_label():
 
     # 2 windows, not 4 (would be 4 if aria-label duplicates were counted).
     assert len(snapshots) == 2
-    assert snapshots[0]['percentage'] == 47
-    assert snapshots[1]['percentage'] == 51
+    assert snapshots[0]['percentage'] == 47.1
+    assert snapshots[1]['percentage'] == 51.1
 
 
 def test_normalize_ollama_quota_returns_empty_for_empty_html():
@@ -1496,7 +1496,7 @@ def test_normalize_cursor_quota_maps_cursor_models_and_other_models():
     assert snapshots[0]['provider'] == 'cursor'
     assert snapshots[0]['label'] == 'Models'
     # "Cursor models" bar reads autoPercentUsed, not totalPercentUsed.
-    assert snapshots[0]['percentage'] == 13
+    assert snapshots[0]['percentage'] == 12.6
     assert snapshots[1]['provider'] == 'cursor'
     assert snapshots[1]['label'] == 'Other'
     # "Other models" bar reads apiPercentUsed (verified against the live page: 100%).
@@ -1639,11 +1639,11 @@ def test_export_cursor_quota_caches_summary(monkeypatch, tmp_path):
 
 _CLAUDE_USAGE_RESPONSE = {
     'five_hour': {
-        'utilization': 0.07,
+        'utilization': 7.0,
         'resets_at': '2026-06-28T22:50:00.285042+00:00',
     },
     'seven_day': {
-        'utilization': 0.53,
+        'utilization': 53.0,
         'resets_at': '2026-07-05T10:00:00.285070+00:00',
     },
 }
@@ -1718,4 +1718,4 @@ def test_export_claude_code_quota_handles_missing_windows(monkeypatch):
 
     assert len(snapshots) == 1
     assert snapshots[0]['label'] == '5h'
-    assert snapshots[0]['percentage'] == 10
+    assert snapshots[0]['percentage'] == 0.1

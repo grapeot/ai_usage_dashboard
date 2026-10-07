@@ -43,6 +43,12 @@ class UsageRecord:
     cache_write: int = 0
     cache_write_1h: int = 0
     source: str = ''
+    billing_provider: str | None = None
+    plan_pool: str | None = None
+    plan_included: bool | None = None
+    recorded_cost_usd: float | None = None
+    account_fingerprint: str | None = None
+    record_id: str | None = None
 
     def total(self) -> int:
         return self.input_non_cached + self.input_cached + self.output + self.cache_write + self.cache_write_1h
@@ -102,6 +108,9 @@ def iter_opencode_records(start: datetime, end: datetime) -> Iterator[UsageRecor
                 input_cached=m.tokens_cache_read,
                 output=m.tokens_output + m.tokens_reasoning,
                 cache_write=m.tokens_cache_write,
+                source='opencode',
+                billing_provider=m.provider,
+                record_id=m.id,
             )
         return
     yield from _iter_opencode_db_records(start, end, start_ms, end_ms)
@@ -116,11 +125,11 @@ def _iter_opencode_db_records(start: datetime, end: datetime, start_ms: int, end
         conn = sqlite3.connect(f'file:{_auto.OPENCODE_DB}?mode=ro', uri=True)
         cur = conn.cursor()
         cur.execute(
-            'SELECT time_created, data FROM message '
+            'SELECT id, time_created, data FROM message '
             "WHERE json_extract(data, '$.role') = 'assistant' AND time_created >= ? AND time_created < ?",
             (start_ms, end_ms),
         )
-        for time_created, data_str in cur:
+        for message_id, time_created, data_str in cur:
             try:
                 msg = json.loads(data_str)
             except json.JSONDecodeError:
@@ -140,6 +149,9 @@ def _iter_opencode_db_records(start: datetime, end: datetime, start_ms: int, end
                 input_cached=int(cache.get('read', 0) or 0),
                 output=int(tokens.get('output', 0) or 0) + int(tokens.get('reasoning', 0) or 0),
                 cache_write=int(cache.get('write', 0) or 0),
+                source='opencode',
+                billing_provider=provider_id,
+                record_id=message_id,
             )
         conn.close()
     except sqlite3.Error:
@@ -159,6 +171,8 @@ def iter_dsh_records(start: datetime, end: datetime) -> Iterator[UsageRecord]:
             input_cached=r['cache_read'],
             output=r['output'],
             cache_write=r['cache_write'],
+            source='dsh',
+            billing_provider=r['model'].partition('/')[0],
         )
 
 
@@ -178,6 +192,8 @@ def iter_claude_records(start: datetime, end: datetime) -> Iterator[UsageRecord]
             output=r['output'],
             cache_write=cache_write_5m,
             cache_write_1h=cache_write_1h,
+            source='claude',
+            billing_provider='anthropic',
         )
 
 
@@ -194,6 +210,9 @@ def iter_codex_records(start: datetime, end: datetime) -> Iterator[UsageRecord]:
             input_cached=r['input_cached'],
             output=r['output'],
             cache_write=r['cache_write'],
+            source='codex',
+            billing_provider=r.get('billing_provider'),
+            record_id=r.get('record_id'),
         )
 
 
@@ -215,6 +234,7 @@ def iter_antigravity_records(start: datetime, end: datetime) -> Iterator[UsageRe
             output=int(entry.get('output', 0) or 0) + int(entry.get('thinking', 0) or 0),
             cache_write=int(entry.get('cache_write', 0) or 0),
             source='antigravity',
+            billing_provider='antigravity',
         )
 
 
@@ -232,14 +252,25 @@ def iter_cursor_records(start: datetime, end: datetime) -> Iterator[UsageRecord]
                 continue
             if not _in_window(t, start, end):
                 continue
+            model = row.get('Model', 'unknown')
+            try:
+                recorded_cost = float(row['Charged Cents']) / 100
+            except (KeyError, ValueError):
+                recorded_cost = None
+            kind = row.get('Kind', '').upper()
             yield UsageRecord(
                 time=t,
                 provider='cursor',
-                model=row.get('Model', 'unknown'),
+                model=model,
                 input_non_cached=int(float(row.get('Input Tokens', 0) or 0)),
                 input_cached=int(float(row.get('Cache Read Tokens', 0) or 0)),
                 output=int(float(row.get('Output Tokens', 0) or 0)),
                 cache_write=int(float(row.get('Cache Write Tokens', 0) or 0)),
+                source='cursor',
+                billing_provider='cursor',
+                plan_pool='Models' if ('composer' in model.lower() or model.lower().startswith(('cursor-', 'auto'))) else 'Other',
+                plan_included='INCLUDED' in kind if kind else None,
+                recorded_cost_usd=recorded_cost,
             )
 
 
