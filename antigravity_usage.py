@@ -7,6 +7,7 @@ the orchestration functions below.
 
 import glob
 import json
+import quota_capture
 import os
 import socket
 import sqlite3
@@ -754,6 +755,7 @@ def export_quota(
         return []
 
     families: dict[str, dict] = {}
+    model_readings: defaultdict[str, list[dict]] = defaultdict(list)
     for config in configs:
         if not isinstance(config, dict):
             continue
@@ -771,7 +773,14 @@ def export_quota(
         if not isinstance(remaining, (int, float)):
             continue
         family = family_for_model(label, model_id)
-        used_percentage = max(0, min(100, int(round((1 - remaining) * 100))))
+        used_percentage = max(0.0, min(100.0, quota_capture.fraction_used(remaining)))
+        model_readings[family].append({
+            'model_id': model_id,
+            'label': label,
+            'percentage': used_percentage,
+            'remaining_fraction': remaining,
+            'next_reset_iso': quota_info.get('resetTime'),
+        })
         existing = families.get(family)
         if existing is None or used_percentage > existing['percentage']:
             families[family] = {
@@ -797,6 +806,8 @@ def export_quota(
                 pass
         snapshots.append({
             'provider': 'antigravity',
+            'quota_scope': 'family_max',
+            'model_quotas': model_readings[family],
             'label': f'{family} 5h',
             'percentage': info['percentage'],
             'next_reset_time_ms': reset_ms,

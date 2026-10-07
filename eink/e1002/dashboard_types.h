@@ -34,7 +34,7 @@ struct DailyEntry {
 struct QuotaWindow {
   String provider;
   String label;
-  int percentage;
+  float percentage;
   uint64_t nextResetTimeMs;
   String nextResetIso;
 };

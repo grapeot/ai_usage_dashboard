@@ -65,7 +65,7 @@ class DailyEntry:
 class QuotaWindow:
     provider: str = ""
     label: str = ""
-    percentage: int = 0
+    percentage: float = 0
     next_reset_time_ms: int = 0
     next_reset_iso: str = ""
 
@@ -492,7 +492,7 @@ def draw_hours_chart(epaper: EPaperSim, data: DashboardData, rect: ChartRect, st
 
 def draw_quota_bar(epaper: EPaperSim, x: int, y: int, w: int, qw: QuotaWindow) -> None:
     bar_h = 14
-    pct = max(0, min(100, qw.percentage))
+    pct = int(max(0.0, min(100.0, qw.percentage)) + 0.5)
     fill_w = (w * pct) // 100
     color = provider_color(qw.provider)
     epaper.fill_rect(x, y, w, bar_h, TFT_WHITE)
@@ -610,7 +610,7 @@ def parse_dashboard_payload(payload: dict) -> DashboardData:
         data.quotas.append(QuotaWindow(
             provider=provider,
             label=label,
-            percentage=int(q.get("percentage", 0)),
+            percentage=float(q.get("percentage", 0)),
             next_reset_time_ms=int(q.get("next_reset_time_ms", 0) or 0),
             next_reset_iso=str(q.get("next_reset_iso", "")),
         ))

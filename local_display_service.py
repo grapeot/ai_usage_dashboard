@@ -20,6 +20,7 @@ from dashboard_models import (
     UsageHistoryResponse,
 )
 import history_store
+import quota_capture
 
 app = FastAPI(
     title="ai_usage_dashboard",
@@ -90,6 +91,7 @@ def token_usage_json() -> dict[str, Any]:
 @app.get(
     "/api/v1/quotas",
     response_model=QuotasResponse,
+    response_model_exclude_unset=True,
     summary="Return current provider quota windows",
     description="Returns a compact automation-oriented view of cached provider quotas, including used and remaining percentages plus reset timestamps. This endpoint reuses the dashboard cache and does not force provider refreshes.",
 )
@@ -104,7 +106,7 @@ def quotas() -> dict[str, Any]:
         payload = {"meta": {}, "quotas": []}
     quota_items = []
     for item in payload.get("quotas") or []:
-        used_percentage = max(0, min(100, int(item.get("percentage", 0) or 0)))
+        used_percentage = max(0.0, min(100.0, float(item.get("percentage", 0) or 0)))
         quota_items.append({
             "provider": item.get("provider", "unknown"),
             "label": item.get("label", "unknown"),
@@ -114,6 +116,7 @@ def quotas() -> dict[str, Any]:
             "next_reset_iso": item.get("next_reset_iso"),
             "usage": item.get("usage"),
             "remaining": item.get("remaining"),
+            **{key: item[key] for key in quota_capture.CAPTURE_FIELDS if key in item},
         })
     return {
         "generated_at": (payload.get("meta") or {}).get("generated_at"),

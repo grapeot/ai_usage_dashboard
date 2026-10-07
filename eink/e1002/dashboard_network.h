@@ -175,7 +175,7 @@ inline bool parseDashboardPayload(const String& payload, DashboardData& data, St
     QuotaWindow& qw = data.quotas[data.quotaCount++];
     qw.provider = provider;
     qw.label = label;
-    qw.percentage = q["percentage"] | 0;
+    qw.percentage = q["percentage"] | 0.0f;
     qw.nextResetTimeMs = q["next_reset_time_ms"] | 0ULL;
     qw.nextResetIso = q["next_reset_iso"] | "";
   }

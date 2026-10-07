@@ -57,6 +57,83 @@ Outputs:
 
 These files are local private artifacts and are ignored by default.
 
+## Plan Capacity Estimation
+
+The estimator reconciles local consumption with quota percentage changes to
+estimate API-equivalent subscription capacity. It reads `quota_history.db` and
+local logs without fetching providers, consulting announcements, creating a
+database, or migrating its schema.
+
+```bash
+# All supported plans, with diagnostic states and measurement evidence
+.venv/bin/python -m plan_usage --all-plans --days 7 --json
+
+# A specific billing plan and quota window
+.venv/bin/python -m plan_usage --plan ollama --window 7d --days 7
+.venv/bin/python -m plan_usage --plan codex --window 7d --days 7 --json
+```
+
+Plan identifiers are `ollama`, `grok`, `codex`, `claude`, `antigravity`, `cursor`,
+and `glm`. `--history-db` overrides the local database, `--window` accepts a
+window kind or exact label, and `--min-change` defaults to three percentage
+points. A seven-day lookback does not imply seven days of available data.
+
+### Measurement and Billing Scope
+
+Capacity is interval priced consumption divided by the quota change expressed
+as a fraction. At least three distinct observations and sufficient movement
+are required; a fitted slope cross-checks the endpoint estimate. JSON includes
+sample times, model/source counts, fit residuals, reset events, and a
+rounding-only endpoint band. That band is not a statistical confidence interval.
+
+Client names do not determine billing: Codex CLI can route to Ollama, OpenCode
+can use either subscription OAuth or paid API keys, and Cursor overage is not
+included-plan usage. Routing uses local source metadata and current credentials;
+historical logs without account metadata are not a billing-ledger audit.
+
+Ollama uses its published per-model peak/offpeak rates. Other subscriptions use
+the current `pricing_config.py` API reference; Cursor uses recorded charged
+cents for included calls. An explicit, correctly scoped upstream dollar limit
+can be returned as `known_limit`; an untyped `limit` is not assumed to be USD.
+Missing prices or records produce diagnostics, not zero-cost capacity.
+
+### The Codex Reset Trap
+
+When estimating Codex quotas, **the god of reset Tibo might interfere with the measurement**.
+Global, banked, or purchased resets can refresh usage and move
+the next reset date; see [banked resets](https://help.openai.com/en/articles/20001498-how-banked-codex-resets-work)
+and [purchased resets](https://help.openai.com/en/articles/20001507-paid-weekly-work-and-codex-rate-limit-resets).
+
+The program only knows that early resets are possible. It splits observations
+when reset identities change or counters drop and estimates segments
+independently. It does not read posts or identify who triggered a reset.
+Month-equivalent capacity uses the ordinary weekly cadence
+(`weekly × 365.25 / (12 × 7)`), without forecasting extra refills. Five-hour
+windows are not multiplied into weeks or months. These are workload-dependent
+equivalents, not official credits, an invoice, or a guaranteed future allowance.
+
+### Data Quality and Precision
+
+`estimated` and `known_limit` are usable results. Other states explain missing
+or ambiguous evidence: `insufficient_change`, `saturated`, `usage_missing`,
+`usage_incomplete`, `quota_scope_unresolved`, `unpriced_usage`, `quota_stale`,
+`quota_unavailable`, `window_identity_missing`, `window_unavailable`, and
+`unstable_measurement`. In particular, a flat or full meter does not imply
+infinite capacity. Antigravity family maxima do not establish billing pools;
+native Grok CLI activity is reported as incomplete token coverage.
+
+Parsers, snapshots, history, and APIs preserve fractional percentages; only
+e-ink presentation rounds. New history writes retain provider capture time
+separately from insertion time, reading provenance, pool/account metadata when
+available, raw reset times, and per-model readings behind display aggregates.
+Old schemas migrate additively on the next history write. Old integer readings
+remain unchanged, and cached/local-log quota replays do not calibrate new usage.
+
+Collect genuine samples with the existing dashboard refresh or
+`POST /api/v1/display/update` when needed. The estimator does not create a new
+sampler or send artificial model requests. Restart an already-running display
+service after updating its Python modules to use the new API precision.
+
 ## Local Display Service
 
 The FastAPI service can serve the latest dashboard JSON to local devices such as an e-paper display.

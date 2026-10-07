@@ -190,7 +190,7 @@ inline void drawHoursChart(EPaper& epaper, const DashboardData& data, const Char
 // Below the bar, the window label and reset time are drawn in small text.
 inline void drawQuotaBar(EPaper& epaper, int x, int y, int w, const QuotaWindow& qw) {
   int barH = 14;
-  int pct = qw.percentage;
+  int pct = static_cast<int>(qw.percentage + 0.5f);
   if (pct < 0) {
     pct = 0;
   }

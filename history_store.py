@@ -30,14 +30,28 @@ the ``AI_USAGE_HISTORY_DB`` environment variable. It is listed in ``.gitignore``
 from __future__ import annotations
 
 import argparse
+import json
 import os
 import sqlite3
 from collections.abc import Mapping, Sequence
 from datetime import datetime, timedelta
+from pathlib import Path
 from typing import Any
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 DEFAULT_DB_PATH = os.path.join(SCRIPT_DIR, 'quota_history.db')
+
+_CAPTURE_COLUMNS = {
+    'recorded_at': 'TEXT',
+    'measurement_source': 'TEXT',
+    'percentage_resolution': 'REAL',
+    'pool_id': 'TEXT',
+    'account_fingerprint': 'TEXT',
+    'model_quotas_json': 'TEXT',
+    'raw_reset_ms': 'INTEGER',
+    'quota_scope': 'TEXT',
+    'absolute_limit_usd': 'REAL',
+}
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS quota_samples (
@@ -91,11 +105,19 @@ def _connect(path: str | None = None) -> sqlite3.Connection:
     conn.execute('PRAGMA journal_mode=WAL')
     conn.execute('PRAGMA busy_timeout=10000')
     conn.executescript(_SCHEMA)
+    columns = {row['name'] for row in conn.execute('PRAGMA table_info(quota_samples)')}
+    if not set(_CAPTURE_COLUMNS).issubset(columns):
+        conn.execute('BEGIN IMMEDIATE')
+        columns = {row['name'] for row in conn.execute('PRAGMA table_info(quota_samples)')}
+        for name, sql_type in _CAPTURE_COLUMNS.items():
+            if name not in columns:
+                conn.execute(f'ALTER TABLE quota_samples ADD COLUMN {name} {sql_type}')
+        conn.commit()
     return conn
 
 
 def _now() -> str:
-    return datetime.now().replace(microsecond=0).isoformat()
+    return datetime.now().astimezone().isoformat(timespec='milliseconds')
 
 
 # Providers compute a window's reset as "now + TTL", so the same physical
@@ -153,7 +175,7 @@ def record_quota_snapshots(
     """
     if not quotas:
         return 0
-    observed_at = observed_at or _now()
+    recorded_at = _now()
     conn = _connect(path)
     inserted = 0
     try:
@@ -161,10 +183,11 @@ def record_quota_snapshots(
             reset_ms = normalize_reset(q.get('next_reset_time_ms'))
             conn.execute(
                 'INSERT INTO quota_samples '
-                '(observed_at, provider, label, percentage, reset_iso, reset_ms, usage, remaining, source) '
-                'VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
+                '(observed_at, provider, label, percentage, reset_iso, reset_ms, usage, remaining, source, '
+                'recorded_at, measurement_source, percentage_resolution, pool_id, account_fingerprint, model_quotas_json, raw_reset_ms, quota_scope, absolute_limit_usd) '
+                'VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
                 (
-                    observed_at,
+                    observed_at or q.get('observed_at') or recorded_at,
                     str(q.get('provider', 'unknown')),
                     str(q.get('label', 'unknown')),
                     float(q.get('percentage', 0) or 0),
@@ -173,6 +196,15 @@ def record_quota_snapshots(
                     q.get('usage'),
                     q.get('remaining'),
                     source,
+                    recorded_at,
+                    q.get('measurement_source'),
+                    q.get('percentage_resolution'),
+                    q.get('pool_id'),
+                    q.get('account_fingerprint'),
+                    json.dumps(q['model_quotas']) if q.get('model_quotas') is not None else None,
+                    q.get('next_reset_time_ms'),
+                    q.get('quota_scope'),
+                    q.get('absolute_limit_usd'),
                 ),
             )
             inserted += 1
@@ -255,24 +287,54 @@ def quota_history(
     path: str | None = None,
 ) -> list[dict[str, Any]]:
     """Return quota samples ordered by observation time."""
-    where: list[str] = []
-    params: list[Any] = []
-    if provider:
-        where.append('provider = ?')
-        params.append(provider)
-    if label:
-        where.append('label = ?')
-        params.append(label)
+    rows = read_quota_samples(path=path, provider=provider, label=label)
     if days is not None:
-        where.append('observed_at >= ?')
-        params.append((datetime.now() - timedelta(days=days)).replace(microsecond=0).isoformat())
-    sql = 'SELECT observed_at, provider, label, percentage, reset_iso, reset_ms, usage, remaining, source FROM quota_samples'
-    if where:
-        sql += ' WHERE ' + ' AND '.join(where)
-    sql += ' ORDER BY observed_at, id'
-    conn = _connect(path)
+        cutoff = (datetime.now().astimezone() - timedelta(days=days)).timestamp()
+        rows = [r for r in rows if datetime.fromisoformat(r['observed_at']).timestamp() >= cutoff]
+    return sorted(rows, key=lambda r: datetime.fromisoformat(r['observed_at']).timestamp())
+
+
+def _decode_quota_row(row: dict[str, Any]) -> dict[str, Any]:
+    row.pop('id', None)
+    encoded = row.pop('model_quotas_json', None)
+    if encoded:
+        try:
+            row['model_quotas'] = json.loads(encoded)
+        except (ValueError, TypeError):
+            row['model_quotas'] = None
+    return row
+
+
+def _read_connection(path: str | None = None) -> sqlite3.Connection | None:
+    target = Path(db_path(path))
+    if not target.exists():
+        return None
+    conn = sqlite3.connect(f'{target.resolve().as_uri()}?mode=ro', uri=True)
+    conn.row_factory = sqlite3.Row
+    return conn
+
+
+def read_quota_samples(*, path: str | None = None, provider: str | None = None,
+                       label: str | None = None) -> list[dict[str, Any]]:
+    """Read old or current history without creating a DB or migrating its schema."""
+    conn = _read_connection(path)
+    if conn is None:
+        return []
     try:
-        return [dict(row) for row in conn.execute(sql, params)]
+        if not conn.execute("SELECT 1 FROM sqlite_master WHERE name='quota_samples'").fetchone():
+            return []
+        where, params = [], []
+        if provider:
+            where.append('provider = ?')
+            params.append(provider)
+        if label:
+            where.append('label = ?')
+            params.append(label)
+        sql = 'SELECT * FROM quota_samples'
+        if where:
+            sql += ' WHERE ' + ' AND '.join(where)
+        sql += ' ORDER BY observed_at, id'
+        return [_decode_quota_row(dict(row)) for row in conn.execute(sql, params)]
     finally:
         conn.close()
 
@@ -286,8 +348,12 @@ def usage_history(days: int | None = None, *, path: str | None = None) -> list[d
         sql += ' WHERE date >= ?'
         params.append(cutoff)
     sql += ' ORDER BY date'
-    conn = _connect(path)
+    conn = _read_connection(path)
+    if conn is None:
+        return []
     try:
+        if not conn.execute("SELECT 1 FROM sqlite_master WHERE name='usage_daily'").fetchone():
+            return []
         return [dict(row) for row in conn.execute(sql, params)]
     finally:
         conn.close()

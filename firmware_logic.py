@@ -91,10 +91,10 @@ def provider_color(provider: str) -> str:
     }.get(provider, 'black')
 
 
-def quota_bar_fill_width(width: int, percentage: int) -> int:
+def quota_bar_fill_width(width: int, percentage: float) -> int:
     """Filled pixel width for a horizontal quota bar.
 
     Mirrors the e-ink firmware's bar fill calculation. Clamps to [0, width].
     """
-    pct = max(0, min(100, percentage))
+    pct = int(max(0.0, min(100.0, percentage)) + 0.5)
     return (width * pct) // 100

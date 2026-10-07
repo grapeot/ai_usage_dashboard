@@ -28,6 +28,7 @@ import codex_local as _codex_local
 import dsh_usage as _dsh_usage
 import grok_usage as _grok_usage
 import history_store
+import quota_capture
 from pricing_config import get_pricing, calc_cost_from_parts
 
 plt.rcParams['axes.unicode_minus'] = False
@@ -84,7 +85,7 @@ class GlmQuotaLimit(TypedDict, total=False):
     usage: int
     currentValue: int
     remaining: int
-    percentage: int
+    percentage: float
     nextResetTime: int
     usageDetails: list[GlmQuotaUsageDetail]
 
@@ -93,7 +94,7 @@ class GlmQuotaSnapshot(TypedDict, total=False):
     label: str
     type: str
     unit: int
-    percentage: int
+    percentage: float
     next_reset_time_ms: int | None
     next_reset_iso: str | None
     usage: int | None
@@ -108,7 +109,13 @@ class GlmQuotaSnapshot(TypedDict, total=False):
 class QuotaSnapshot(TypedDict, total=False):
     provider: str
     label: str
-    percentage: int
+    percentage: float
+    observed_at: str
+    measurement_source: str
+    percentage_resolution: float | None
+    pool_id: str
+    account_fingerprint: str | None
+    model_quotas: list[dict[str, Any]]
     next_reset_time_ms: int | None
     next_reset_iso: str | None
     usage: int | None
@@ -132,7 +139,7 @@ CODEEX_WHAM_USAGE_URL = 'https://chatgpt.com/backend-api/wham/usage'
 
 # Claude Code OAuth usage endpoint. The token is stored in the macOS Keychain
 # generic-password item "Claude Code-credentials" (account = username), under
-# the claudeAiOauth.accessToken field. utilization is a float 0-1 (not 0-100).
+# the claudeAiOauth.accessToken field. Native utilization is a percentage.
 CLAUDE_OAUTH_USAGE_URL = 'https://api.anthropic.com/api/oauth/usage'
 DailyModelTokens = Mapping[date, Mapping[str, dict[str, int]]]
 TimeInterval = tuple[datetime, datetime]
@@ -645,7 +652,7 @@ def normalize_cursor_quota(body: dict[str, object] | None) -> list[QuotaSnapshot
         snapshots.append({
             'provider': 'cursor',
             'label': label,
-            'percentage': int(round(min(100.0, max(0.0, pct)))),
+            'percentage': min(100.0, max(0.0, pct)),
             'next_reset_time_ms': reset_ms,
             'next_reset_iso': reset_iso,
         })
@@ -754,7 +761,7 @@ def normalize_glm_quota(body: dict[str, object]) -> list[GlmQuotaSnapshot]:
             'label': _glm_quota_label(limit_type, unit),
             'type': limit_type,
             'unit': unit,
-            'percentage': int(limit.get('percentage', 0)),
+            'percentage': float(limit.get('percentage', 0)),
             'next_reset_time_ms': next_reset_ms,
             'next_reset_iso': _epoch_ms_to_iso(next_reset_ms),
             'usage': int(limit['usage']) if 'usage' in limit and isinstance(limit['usage'], (int, float)) else None,
@@ -795,7 +802,7 @@ def format_glm_quota_block(snapshots: list[GlmQuotaSnapshot]) -> str:
         usage = s.get('usage')
         if remaining is not None and usage is not None:
             absolute_part = f'  used {usage}/{usage + remaining}'
-        lines.append(f"  {s['label']}: {pct}% used{absolute_part}{reset_part}")
+        lines.append(f"  {s['label']}: {pct:g}% used{absolute_part}{reset_part}")
     return '\n'.join(lines)
 
 
@@ -817,6 +824,7 @@ def glm_quota_to_unified(snapshots: list[GlmQuotaSnapshot]) -> list[QuotaSnapsho
             'next_reset_iso': s.get('next_reset_iso'),
             'usage': s.get('usage'),
             'remaining': s.get('remaining'),
+            **{key: s[key] for key in quota_capture.CAPTURE_FIELDS if key in s},
         })
     return unified
 
@@ -877,11 +885,14 @@ def export_codex_quota() -> list[QuotaSnapshot]:
         snapshots.append({
             'provider': 'codex',
             'label': _codex_window_label_from_seconds(window.get('limit_window_seconds')) or label_key,
-            'percentage': int(round(used)),
+            'pool_id': f'codex:{slot}',
+            'percentage': float(used),
             'next_reset_time_ms': resets_ms,
             'next_reset_iso': _epoch_s_to_iso(resets_at if isinstance(resets_at, (int, float)) else None),
         })
-    return snapshots
+    return cast(list[QuotaSnapshot], quota_capture.capture(
+        snapshots, account=quota_capture.openai_account_fingerprint(auth),
+    ))
 
 
 def normalize_codex_rate_limits(rate_limits: dict[str, object]) -> list[QuotaSnapshot]:
@@ -904,7 +915,8 @@ def normalize_codex_rate_limits(rate_limits: dict[str, object]) -> list[QuotaSna
         snapshots.append({
             'provider': 'codex',
             'label': _codex_window_label(window.get('window_minutes')),
-            'percentage': int(round(used)),
+            'pool_id': f'codex:{slot}',
+            'percentage': float(used),
             'next_reset_time_ms': resets_ms,
             'next_reset_iso': _epoch_s_to_iso(resets_at if isinstance(resets_at, (int, float)) else None),
         })
@@ -936,20 +948,29 @@ def load_codex_quota(start_date: str | None = None, end_date: str | None = None)
         if root.exists():
             files.extend(sorted(root.rglob('*.jsonl'), reverse=True))
 
+    files.sort(key=lambda p: p.stat().st_mtime, reverse=True)
     latest_rate_limits: dict[str, object] | None = None
     latest_time: datetime | None = None
     for session_file in files:
+        if latest_time is not None and session_file.stat().st_mtime < latest_time.timestamp():
+            break
+        model_provider = 'openai'
         try:
             with session_file.open() as f:
                 for line in f:
                     line = line.strip()
-                    if not line or '"token_count"' not in line or '"rate_limits"' not in line:
+                    if not line or not ('"session_meta"' in line or ('"token_count"' in line and '"rate_limits"' in line)):
                         continue
                     try:
                         raw = json.loads(line)
                     except json.JSONDecodeError:
                         continue
-                    if raw.get('type') != 'event_msg':
+                    if raw.get('type') == 'session_meta':
+                        model_provider = raw.get('payload', {}).get('model_provider', 'openai')
+                        if model_provider != 'openai':
+                            break
+                        continue
+                    if raw.get('type') != 'event_msg' or model_provider != 'openai':
                         continue
                     payload = raw.get('payload', {})
                     if not isinstance(payload, dict) or payload.get('type') != 'token_count':
@@ -963,12 +984,13 @@ def load_codex_quota(start_date: str | None = None, end_date: str | None = None)
                         latest_rate_limits = rate_limits
         except OSError:
             continue
-        if latest_rate_limits is not None:
-            break
 
     if latest_rate_limits is None:
         return []
-    return normalize_codex_rate_limits(latest_rate_limits)
+    return cast(list[QuotaSnapshot], quota_capture.capture(
+        normalize_codex_rate_limits(latest_rate_limits), source='local_log',
+        observed_at=latest_time.astimezone().isoformat() if latest_time else None,
+    ))
 
 
 def _provider_display_name(provider: str) -> str:
@@ -992,7 +1014,7 @@ def format_quotas_block(snapshots: list[QuotaSnapshot]) -> str:
         pct = s.get('percentage', 0)
         reset_iso = s.get('next_reset_iso')
         reset_part = f'  reset @ {reset_iso}' if reset_iso else ''
-        lines.append(f"  {provider} {s.get('label', '')}: {pct}% used{reset_part}")
+        lines.append(f"  {provider} {s.get('label', '')}: {pct:g}% used{reset_part}")
     return '\n'.join(lines)
 
 
@@ -1077,7 +1099,8 @@ def normalize_ollama_quota(html: str) -> list[QuotaSnapshot]:
         snapshots.append({
             'provider': 'ollama',
             'label': labels[i] if i < len(labels) else f'Window {i+1}',
-            'percentage': int(round(pct)),
+            'percentage': pct,
+            'percentage_resolution': quota_capture.percentage_resolution(pct_re.findall(html)[i]),
             'next_reset_time_ms': reset_ms,
             'next_reset_iso': reset_iso_local,
         })
@@ -1135,10 +1158,10 @@ def _iso_utc_to_epoch_ms(iso: str | None) -> int | None:
         return None
 
 
-def _normalize_usage_percentage(utilization: int | float) -> int:
-    """Normalize quota utilization from either ratio (0-1) or percent (0-100)."""
-    pct = utilization * 100 if utilization <= 1 else utilization
-    return max(0, min(100, int(round(pct))))
+def _normalize_usage_percentage(utilization: int | float, *, unit: str = 'percent') -> float:
+    """Convert explicitly tagged ratios; small percentages must stay small."""
+    pct = quota_capture.ratio_percentage(utilization) if unit in ('ratio', 'fraction') else utilization
+    return max(0.0, min(100.0, float(pct)))
 
 
 def export_claude_code_quota() -> list[QuotaSnapshot]:
@@ -1146,8 +1169,8 @@ def export_claude_code_quota() -> list[QuotaSnapshot]:
 
     Reads the OAuth token from the macOS Keychain and calls
     GET https://api.anthropic.com/api/oauth/usage. Returns [] when the token
-    is missing/expired or the API fails. utilization may be either a 0-1 ratio
-    or a 0-100 percentage; normalized to 0-100. Reset times are UTC ISO;
+    is missing/expired or the API fails. Native utilization is a percentage;
+    explicitly tagged ratio responses are also supported. Reset times are UTC ISO;
     converted to local.
     """
     token = _read_claude_code_oauth_token()
@@ -1172,7 +1195,8 @@ def export_claude_code_quota() -> list[QuotaSnapshot]:
         snapshots.append({
             'provider': 'claude',
             'label': label,
-            'percentage': _normalize_usage_percentage(utilization),
+            'pool_id': f'claude:{key}',
+            'percentage': _normalize_usage_percentage(utilization, unit=window.get('utilization_unit', 'percent')),
             'next_reset_time_ms': _iso_utc_to_epoch_ms(resets_iso),
             'next_reset_iso': _iso_utc_to_local(resets_iso),
         })
@@ -2130,31 +2154,42 @@ def collect_quotas(*, verbose: bool = True) -> tuple[list[GlmQuotaSnapshot], lis
         if verbose:
             print(message)
 
+    def cached_capture(items: list, filename: str, fresh: bool) -> list:
+        path = Path(SCRIPT_DIR) / filename
+        observed = datetime.fromtimestamp(path.stat().st_mtime).astimezone().isoformat() if path.exists() else None
+        return quota_capture.capture(items, observed_at=observed, source='live' if fresh else 'cache')
+
     glm_token = os.environ.get('GLM_BEARER_TOKEN', '')
     glm_quota: list[GlmQuotaSnapshot] = []
+    glm_fresh = False
     if glm_token:
         log("Exporting GLM quota...")
         try:
             export_glm_quota(glm_token)
+            glm_fresh = True
         except Exception as e:
             log(f"Failed to export GLM quota: {e}")
-    glm_quota = load_glm_quota()
+    glm_quota = cast(list[GlmQuotaSnapshot], cached_capture(
+        [dict(item, provider='glm') for item in load_glm_quota()], OUTPUT_GLM_QUOTA_JSON, glm_fresh,
+    ))
 
     ollama_cookie = os.environ.get('OLLAMA_COOKIE', '')
+    ollama_fresh = False
     if ollama_cookie:
         log("Exporting Ollama quota...")
         try:
             export_ollama_quota(ollama_cookie)
+            ollama_fresh = True
         except Exception as e:
             log(f"Failed to export Ollama quota: {e}")
-    ollama_quota = load_ollama_quota()
+    ollama_quota = cached_capture(load_ollama_quota(), OUTPUT_OLLAMA_QUOTA_HTML, ollama_fresh)
 
     log("Loading Codex quota from wham/usage API...")
-    codex_quota = load_codex_quota()
+    codex_quota = quota_capture.capture(load_codex_quota())
 
     log("Loading Claude Code quota from OAuth usage endpoint...")
     try:
-        claude_quota = export_claude_code_quota()
+        claude_quota = quota_capture.capture(export_claude_code_quota())
     except Exception as e:
         log(f"Failed to fetch Claude Code quota: {e}")
         claude_quota = []
@@ -2162,7 +2197,7 @@ def collect_quotas(*, verbose: bool = True) -> tuple[list[GlmQuotaSnapshot], lis
     log("Loading Antigravity IDE quota from live Language Server...")
     antigravity_quota: list[QuotaSnapshot] = []
     try:
-        antigravity_quota = export_antigravity_quota()
+        antigravity_quota = quota_capture.capture(export_antigravity_quota())
     except Exception as e:
         log(f"Failed to fetch Antigravity quota: {e}")
 
@@ -2171,19 +2206,21 @@ def collect_quotas(*, verbose: bool = True) -> tuple[list[GlmQuotaSnapshot], lis
     if grok_cookie:
         log("Loading Grok weekly usage pool from grok.com...")
         try:
-            grok_quota = cast(list[QuotaSnapshot], _grok_usage.export_grok_quota(grok_cookie))
+            grok_quota = cast(list[QuotaSnapshot], quota_capture.capture(_grok_usage.export_grok_quota(grok_cookie)))
         except Exception as e:
             log(f"Failed to fetch Grok quota: {e}")
 
     cursor_quota: list[QuotaSnapshot] = []
     cursor_cookie = os.environ.get('CURSOR_COOKIE', '')
+    cursor_fresh = False
     if cursor_cookie:
         log("Loading Cursor quota from usage-summary API...")
         try:
             export_cursor_quota(cursor_cookie)
+            cursor_fresh = True
         except Exception as e:
             log(f"Failed to fetch Cursor quota: {e}")
-        cursor_quota = load_cursor_quota()
+        cursor_quota = cached_capture(load_cursor_quota(), 'cursor_usage_summary.json', cursor_fresh)
 
     quotas = glm_quota_to_unified(glm_quota) + ollama_quota + codex_quota + claude_quota + antigravity_quota + grok_quota + cursor_quota
     return glm_quota, quotas

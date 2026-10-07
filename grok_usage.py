@@ -187,7 +187,7 @@ def parse_grok_credits_response(body: bytes) -> dict[str, Any]:
     if credit_usage_percent is None:
         credit_usage_percent = 0.0
 
-    used = max(0, min(100, int(round(credit_usage_percent))))
+    used = max(0.0, min(100.0, credit_usage_percent))
     period_label = {
         1: 'Monthly',
         2: 'Weekly',
