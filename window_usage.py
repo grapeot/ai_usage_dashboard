@@ -24,6 +24,7 @@ from datetime import date, datetime, timedelta
 from typing import Iterator
 
 import auto_usage as _auto
+import antigravity_usage as _ag
 import codex_local as _codex_local
 import dsh_usage as _dsh_usage
 from pricing_config import calc_cost_from_parts, get_pricing
@@ -41,6 +42,7 @@ class UsageRecord:
     output: int = 0
     cache_write: int = 0
     cache_write_1h: int = 0
+    source: str = ''
 
     def total(self) -> int:
         return self.input_non_cached + self.input_cached + self.output + self.cache_write + self.cache_write_1h
@@ -165,7 +167,7 @@ def iter_claude_records(start: datetime, end: datetime) -> Iterator[UsageRecord]
         t = r['time']
         if not _in_window(t, start, end):
             continue
-        _, cache_write_1h, _ = _auto.split_claude_cache_write_tokens(r)
+        cache_write_5m, cache_write_1h, _ = _auto.split_claude_cache_write_tokens(r)
         model_id = _auto.normalize_claude_model_id(r['model'], r['speed'])
         yield UsageRecord(
             time=t,
@@ -174,7 +176,7 @@ def iter_claude_records(start: datetime, end: datetime) -> Iterator[UsageRecord]
             input_non_cached=r['input'],
             input_cached=r['cache_read'],
             output=r['output'],
-            cache_write=r['cache_write_5m'],
+            cache_write=cache_write_5m,
             cache_write_1h=cache_write_1h,
         )
 
@@ -196,7 +198,6 @@ def iter_codex_records(start: datetime, end: datetime) -> Iterator[UsageRecord]:
 
 
 def iter_antigravity_records(start: datetime, end: datetime) -> Iterator[UsageRecord]:
-    import antigravity_usage as _ag
     for entry in _auto._load_antigravity_cache():
         ts = _ag.parse_timestamp(entry.get('timestamp'))
         if not ts:
@@ -207,12 +208,13 @@ def iter_antigravity_records(start: datetime, end: datetime) -> Iterator[UsageRe
         model_id = entry.get('model', 'unknown')
         yield UsageRecord(
             time=t,
-            provider=_bucket('google', model_id),
+            provider=_auto._classify_antigravity_model(model_id),
             model=model_id,
             input_non_cached=int(entry.get('input', 0) or 0),
             input_cached=int(entry.get('cache_read', 0) or 0),
             output=int(entry.get('output', 0) or 0) + int(entry.get('thinking', 0) or 0),
             cache_write=int(entry.get('cache_write', 0) or 0),
+            source='antigravity',
         )
 
 
@@ -295,7 +297,11 @@ def aggregate(
             entry.models[record.model] = entry.models.get(record.model, 0) + record.total()
             if record.provider in _UNPRICED_PROVIDERS:
                 continue
-            pricing = get_pricing(record.model)
+            pricing = (
+                _ag.resolve_pricing(record.model, pricing_lookup=get_pricing)
+                if record.source == 'antigravity'
+                else get_pricing(record.model)
+            )
             if pricing:
                 entry.cost_usd += calc_cost_from_parts(
                     pricing,

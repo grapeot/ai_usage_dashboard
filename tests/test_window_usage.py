@@ -5,6 +5,8 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 import window_usage
+import pytest
+import antigravity_usage
 
 
 def test_parse_bound_iso_datetime():
@@ -133,3 +135,75 @@ def test_aggregate_excludes_out_of_window_records(monkeypatch):
     totals = window_usage.aggregate(datetime(2026, 10, 5), datetime(2026, 10, 6), sources=['fake3'])
     assert totals['grok'].requests == 1
     assert totals['grok'].input_non_cached == 5
+
+
+@pytest.mark.parametrize('model,bucket', [
+    ('gemini-3-flash', 'gemini'),
+    ('claude-opus-4.6', 'anthropic'),
+    ('gpt-5.4', 'gpt_opencode'),
+    ('deepseek-v4-flash', 'deepseek'),
+    ('qwen3.8-27b', 'qwen'),
+    ('model_placeholder_m20', 'gemini'),
+])
+def test_antigravity_window_uses_dashboard_model_buckets(monkeypatch, model, bucket):
+    start = datetime(2026, 10, 5)
+    entry = {'timestamp': int(start.timestamp() * 1000), 'model': model, 'input': 100}
+    monkeypatch.setattr(window_usage._auto, '_load_antigravity_cache', lambda: [entry])
+    totals = window_usage.aggregate(start, datetime(2026, 10, 6), sources=['antigravity'])
+    assert set(totals) == {bucket}
+    assert totals[bucket].total == 100
+    assert totals[bucket].models == {model: 100}
+
+
+@pytest.mark.parametrize('model', ['gemini-unresolved-test', 'model_placeholder_test', 'custom-test-model'])
+def test_antigravity_window_cost_matches_dashboard_fallback(monkeypatch, model):
+    start = datetime(2026, 10, 5)
+    tokens = {'input': 1_000, 'cache_read': 500, 'output': 100, 'cache_write': 200}
+    entry = {'timestamp': int(start.timestamp() * 1000), 'model': model, **tokens}
+    monkeypatch.setattr(window_usage._auto, '_load_antigravity_cache', lambda: [entry])
+    # Only the prefixed lookup resolves the custom model; unresolved Gemini and
+    # placeholders must instead use the Gemini fallback. All prices are fake.
+    prices = {
+        'antigravity-custom-test-model': {'input': 2, 'cached': 0.2, 'output': 5, 'cache_write': 3},
+        'gemini-3-flash': {'input': 1, 'cached': 0.1, 'output': 4, 'cache_write': 2},
+    }
+    monkeypatch.setattr(window_usage, 'get_pricing', prices.get)
+    expected = antigravity_usage.calculate_cost(
+        {start.date(): {model: tokens}}, pricing_lookup=prices.get,
+    )[start.date()]
+    totals = window_usage.aggregate(start, datetime(2026, 10, 6), sources=['antigravity'])
+    assert expected > 0
+    assert sum(t.cost_usd for t in totals.values()) == pytest.approx(expected)
+
+
+def test_antigravity_fallback_does_not_price_other_sources(monkeypatch):
+    start = datetime(2026, 10, 5)
+    records = [window_usage.UsageRecord(
+        time=start, provider='gemini', model='gemini-unresolved-test', input_non_cached=1_000,
+    )]
+    monkeypatch.setitem(window_usage.SOURCES, 'fake', lambda s, e: iter(records))
+    prices = {'gemini-3-flash': {'input': 1, 'output': 4}}
+    monkeypatch.setattr(window_usage, 'get_pricing', prices.get)
+    totals = window_usage.aggregate(start, datetime(2026, 10, 6), sources=['fake'])
+    assert totals['gemini'].total == 1_000
+    assert totals['gemini'].cost_usd == 0
+
+
+@pytest.mark.parametrize('nested_5m,nested_1h,expected_5m', [(20, 30, 70), (0, 0, 100), (70, 30, 70)])
+def test_claude_window_preserves_reconciled_cache_writes(monkeypatch, nested_5m, nested_1h, expected_5m):
+    start = datetime(2026, 10, 5)
+    record = {
+        'time': start, 'model': 'claude-opus-4-6', 'speed': '',
+        'input': 10, 'cache_read': 40, 'output': 5,
+        'cache_write': 100, 'cache_write_5m': nested_5m, 'cache_write_1h': nested_1h,
+    }
+    monkeypatch.setattr(window_usage._auto, 'iter_claude_usage_records', lambda **kwargs: iter([record]))
+    totals = window_usage.aggregate(start, datetime(2026, 10, 6), sources=['claude'])
+    claude = totals['anthropic']
+    assert claude.cache_write == expected_5m
+    assert claude.cache_write_1h == nested_1h
+    assert claude.total == 155
+    # Opus 4.6: input $5/M, cache read $0.5/M, output $25/M,
+    # 5-minute cache write $6.25/M, 1-hour cache write $10/M.
+    expected_cost = (10 * 5 + 40 * 0.5 + 5 * 25 + expected_5m * 6.25 + nested_1h * 10) / 1e6
+    assert claude.cost_usd == pytest.approx(expected_cost)
