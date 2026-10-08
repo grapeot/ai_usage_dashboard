@@ -24,15 +24,12 @@ MODEL_PRICING = {
     "gpt-6-luna": {"input": 0.1, "cached": 0.01, "cache_write": 0.125, "output": 0.5},
     # GPT-6.1 Sol (2026-09-29): $2/$10 like Sol, cached input halved to $0.10.
     "gpt-6.1-sol": {"input": 2.0, "cached": 0.1, "cache_write": 2.5, "output": 10.0},
-    # GPT-6.1 Sol Ultrafast (2026-10-08, OpenAI community announcement:
-    # $12/M input, $60/M output, "just 1.2x the cost of Astra", i.e. 1.2x
-    # Astra standard $10/$50, not Astra ultrafast). Official source lists
-    # input/output only; cached $0.60 is 6x the standard cached $0.10 (not
-    # 10% of the $12 input, which would be $1.20); cache_write $15 is the
-    # same under either reading (6x $2.50 = 1.25x $12). Explicit entry wins
-    # over the generic gpt-*-ultrafast 6x fallback, which currently
-    # coincides. If OpenAI publishes official cache rates, fix only the
-    # fields here that disagree.
+    # GPT-6.1 Sol Ultrafast (2026-10-08 rollout; official Ultrafast pricing
+    # table: $12/M input, $0.60 cached, $15 cache writes, $60/M output,
+    # short context). Community announcement frames $12/$60 as "just 1.2x
+    # the cost of Astra", i.e. Astra standard $10/$50, not Astra ultrafast
+    # $60/$300. Explicit entry wins over the generic gpt-*-ultrafast 6x
+    # fallback, which currently coincides.
     "gpt-6.1-sol-ultrafast": {"input": 12.0, "cached": 0.6, "cache_write": 15.0, "output": 60.0},
     "gpt-5.5": {"input": 5.0, "cached": 0.5, "output": 30.0},
     "gpt-5.4": {"input": 2.5, "cached": 0.25, "output": 15.0},
