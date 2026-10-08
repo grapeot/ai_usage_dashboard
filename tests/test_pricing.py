@@ -135,8 +135,11 @@ class TestGetPricing:
         assert get_pricing("gpt-5.6-sol-fast") == {"input": 8.0, "cached": 0.8, "cache_write": 10.0, "output": 40.0}
         assert get_pricing("gpt-5.6-terra-fast") == {"input": 4.0, "cached": 0.4, "cache_write": 5.0, "output": 24.0}
         assert get_pricing("gpt-6-astra-fast") == {"input": 20.0, "cached": 2.0, "cache_write": 25.0, "output": 100.0}
-        # Ultrafast is Astra-only, 6x standard.
+        # Ultrafast tiers: Astra 6x standard (pricing page); GPT-6.1 Sol at
+        # the official 2026-10-08 announced $12/$60, cached/cache_write
+        # extrapolated at 6x following the Astra convention.
         assert get_pricing("gpt-6-astra-ultrafast") == {"input": 60.0, "cached": 6.0, "cache_write": 75.0, "output": 300.0}
+        assert get_pricing("gpt-6.1-sol-ultrafast") == {"input": 12.0, "cached": 0.6, "cache_write": 15.0, "output": 60.0}
         assert get_pricing("gpt-6-sol-fast") == {"input": 4.0, "cached": 0.4, "cache_write": 5.0, "output": 20.0}
         assert get_pricing("gpt-6.1-sol-fast") == {"input": 4.0, "cached": 0.2, "cache_write": 5.0, "output": 20.0}
         # pro/low/medium/high are reasoning parameters, priced at base rate.
