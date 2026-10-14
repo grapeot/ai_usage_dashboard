@@ -217,7 +217,9 @@ def iter_codex_records(start: datetime, end: datetime) -> Iterator[UsageRecord]:
 
 
 def iter_antigravity_records(start: datetime, end: datetime) -> Iterator[UsageRecord]:
-    for entry in _auto._load_antigravity_cache():
+    entries = _auto._load_antigravity_cache()
+    _ag.backfill_missing_timestamps(entries, _ag.default_conversation_dirs())
+    for entry in entries:
         ts = _ag.parse_timestamp(entry.get('timestamp'))
         if not ts:
             continue

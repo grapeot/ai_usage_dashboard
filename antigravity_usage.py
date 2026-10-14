@@ -446,6 +446,141 @@ def save_cache(path: str, entries: list[dict]) -> None:
         }, stream, indent=2)
 
 
+_EPOCH_SECONDS_MIN = 1_500_000_000
+_EPOCH_SECONDS_MAX = 2_200_000_000
+
+
+def default_conversation_dirs() -> list[str]:
+    return [
+        os.path.expanduser('~/.gemini/antigravity-ide/conversations'),
+        os.path.expanduser('~/.gemini/antigravity/conversations'),
+        os.path.expanduser('~/.gemini/antigravity-cli/conversations'),
+    ]
+
+
+def _read_varint(data: bytes, offset: int) -> tuple[int, int] | None:
+    value = 0
+    shift = 0
+    index = offset
+    while index < len(data) and shift <= 63:
+        byte = data[index]
+        index += 1
+        value |= (byte & 0x7F) << shift
+        if byte < 0x80:
+            return value, index
+        shift += 7
+    return None
+
+
+def timestamp_ms_from_step_metadata(blob: bytes) -> int | None:
+    """Read the leading protobuf timestamp from an Antigravity step metadata blob.
+
+    Newer Language Server usage payloads omit createdAt. The conversation DB
+    still stores a timestamp message as field 1 of step metadata.
+    """
+    if not blob or blob[0] != 0x0A:
+        return None
+    length_parsed = _read_varint(blob, 1)
+    if not length_parsed:
+        return None
+    length, index = length_parsed
+    end = index + length
+    if end > len(blob) or index >= len(blob) or blob[index] != 0x08:
+        return None
+    seconds_parsed = _read_varint(blob, index + 1)
+    if not seconds_parsed:
+        return None
+    seconds, _ = seconds_parsed
+    if _EPOCH_SECONDS_MIN <= seconds <= _EPOCH_SECONDS_MAX:
+        return int(seconds) * 1000
+    return None
+
+
+def _connect_readonly(path: str) -> sqlite3.Connection:
+    uri = f'file:{path}?mode=ro'
+    try:
+        return sqlite3.connect(uri, uri=True)
+    except sqlite3.OperationalError:
+        return sqlite3.connect(uri + '&immutable=1', uri=True)
+
+
+def _timestamps_by_response_id(path: str, wanted: set[str]) -> dict[str, int]:
+    found: dict[str, int] = {}
+    if not wanted or not os.path.exists(path):
+        return found
+    connection = None
+    try:
+        connection = _connect_readonly(path)
+        for (blob,) in connection.execute(
+            'SELECT metadata FROM steps WHERE metadata IS NOT NULL'
+        ):
+            if not blob:
+                continue
+            timestamp_ms = timestamp_ms_from_step_metadata(blob)
+            if not timestamp_ms:
+                continue
+            for response_id in wanted:
+                if response_id in found:
+                    continue
+                if response_id.encode() in blob:
+                    found[response_id] = timestamp_ms
+            if len(found) == len(wanted):
+                break
+    except sqlite3.Error:
+        return found
+    finally:
+        if connection:
+            connection.close()
+    return found
+
+
+def backfill_missing_timestamps(
+    entries: list[dict],
+    conversation_dirs: list[str],
+) -> int:
+    """Fill timestamps the Language Server no longer returns, using local DBs.
+
+    Gemini 4 Argon (and some newer Flash variants) omit usage.createdAt.
+    Without a timestamp the daily aggregator drops the tokens entirely.
+    """
+    missing_by_session: dict[str, set[str]] = {}
+    for entry in entries:
+        if entry.get('timestamp') or entry.get('timestamp_ms'):
+            continue
+        session_id = entry.get('session_id')
+        response_id = entry.get('response_id')
+        if not session_id or not response_id:
+            continue
+        missing_by_session.setdefault(str(session_id), set()).add(str(response_id))
+    if not missing_by_session:
+        return 0
+
+    resolved: dict[tuple[str, str], int] = {}
+    for session_id, response_ids in missing_by_session.items():
+        for directory in conversation_dirs:
+            path = os.path.join(directory, f'{session_id}.db')
+            if not os.path.exists(path):
+                continue
+            for response_id, timestamp_ms in _timestamps_by_response_id(
+                path, response_ids
+            ).items():
+                resolved[(session_id, response_id)] = timestamp_ms
+            break
+
+    filled = 0
+    for entry in entries:
+        if entry.get('timestamp') or entry.get('timestamp_ms'):
+            continue
+        timestamp_ms = resolved.get(
+            (str(entry.get('session_id') or ''), str(entry.get('response_id') or ''))
+        )
+        if not timestamp_ms:
+            continue
+        entry['timestamp'] = timestamp_ms
+        filled += 1
+    return filled
+
+
 def entry_to_date(entry: dict) -> date | None:
     timestamp = entry.get('timestamp')
     if timestamp is None:
@@ -618,6 +753,7 @@ def load_usage(
                     sync_metadata_updated = True
                 break
 
+    backfill_missing_timestamps(all_entries, conversation_dirs)
     if all_entries:
         save_cached(all_entries)
     if sync_metadata_updated:
@@ -645,6 +781,8 @@ def load_detailed(
     *,
     load_cached: Callable[[], list[dict]],
     get_entry_date: Callable[[dict], date | None] = entry_to_date,
+    conversation_dirs: list[str] | None = None,
+    save_cached: Callable[[list[dict]], None] | None = None,
 ) -> dict[date, dict[str, dict[str, int]]]:
     daily_models: defaultdict[date, defaultdict[str, dict[str, int]]] = defaultdict(
         lambda: defaultdict(
@@ -657,7 +795,12 @@ def load_detailed(
             }
         )
     )
-    for entry in load_cached():
+    entries = load_cached()
+    if conversation_dirs:
+        filled = backfill_missing_timestamps(entries, conversation_dirs)
+        if filled and save_cached:
+            save_cached(entries)
+    for entry in entries:
         entry_date = get_entry_date(entry)
         if not entry_date:
             continue

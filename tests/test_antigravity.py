@@ -1,6 +1,7 @@
 """Tests for Google Antigravity IDE token usage integration."""
 import json
 import os
+import sqlite3
 import sys
 from datetime import date, datetime
 from pathlib import Path
@@ -814,6 +815,50 @@ class TestExportAntigravityQuota:
              patch('auto_usage._antigravity_rpc', return_value=None):
             result = export_antigravity_quota()
         assert result == []
+
+
+class TestArgonTimestampBackfill:
+    def test_decodes_leading_protobuf_timestamp(self):
+        from antigravity_usage import timestamp_ms_from_step_metadata
+
+        blob = bytes.fromhex('0a0b08b0ddbad60610c0a3ed321802') + b'response-id-1'
+        assert timestamp_ms_from_step_metadata(blob) == 1791930032000
+
+    def test_backfill_uses_conversation_step_metadata(self, tmp_path):
+        from antigravity_usage import backfill_missing_timestamps, entry_to_date
+
+        database = tmp_path / 'sess-argon.db'
+        connection = sqlite3.connect(database)
+        connection.execute('CREATE TABLE steps (idx INTEGER, metadata BLOB)')
+        blob = bytes.fromhex('0a0b08b0ddbad60610c0a3ed321802') + b'rid-argon'
+        connection.execute('INSERT INTO steps (idx, metadata) VALUES (1, ?)', (blob,))
+        connection.commit()
+        connection.close()
+
+        entries = [{
+            'model': 'gemini-4-argon',
+            'timestamp': None,
+            'input': 100,
+            'output': 20,
+            'response_id': 'rid-argon',
+            'session_id': 'sess-argon',
+        }]
+        filled = backfill_missing_timestamps(entries, [str(tmp_path)])
+        assert filled == 1
+        assert entries[0]['timestamp'] == 1791930032000
+        assert entry_to_date(entries[0]) == datetime.fromtimestamp(1791930032).date()
+
+    def test_backfill_leaves_existing_timestamp(self, tmp_path):
+        from antigravity_usage import backfill_missing_timestamps
+
+        entries = [{
+            'model': 'gemini-4-argon',
+            'timestamp': 1711447200000,
+            'response_id': 'rid-argon',
+            'session_id': 'missing',
+        }]
+        assert backfill_missing_timestamps(entries, [str(tmp_path)]) == 0
+        assert entries[0]['timestamp'] == 1711447200000
 
 
 @pytest.mark.live_antigravity

@@ -1663,11 +1663,7 @@ def load_antigravity() -> dict[str, DailyTokens]:
         classify=_classify_antigravity_model,
         get_entry_date=_entry_to_date,
         get_entry_total=_entry_total,
-        conversation_dirs=[
-            os.path.expanduser('~/.gemini/antigravity-ide/conversations'),
-            os.path.expanduser('~/.gemini/antigravity/conversations'),
-            os.path.expanduser('~/.gemini/antigravity-cli/conversations'),
-        ],
+        conversation_dirs=_antigravity_usage.default_conversation_dirs(),
     )
 
 
@@ -1675,6 +1671,8 @@ def load_antigravity_detailed() -> dict[date, dict[str, dict[str, int]]]:
     return _antigravity_usage.load_detailed(
         load_cached=_load_antigravity_cache,
         get_entry_date=_entry_to_date,
+        conversation_dirs=_antigravity_usage.default_conversation_dirs(),
+        save_cached=_save_antigravity_cache,
     )
 
 
