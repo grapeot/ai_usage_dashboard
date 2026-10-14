@@ -105,6 +105,10 @@ MODEL_PRICING = {
     "gemini-3.8-flash": {"input": 0.75, "cached": 0.075, "output": 3.75},
     "gemini-3.7-flash": {"input": 0.75, "cached": 0.075, "output": 3.75},
     "gemini-3.5-flash": {"input": 1.5, "cached": 0.15, "output": 9.0},
+    # Gemini 4 Argon intro Standard rates through 2026-11-30
+    # (ai.google.dev/gemini-api/docs/pricing): $2 / $0.10 cached / $10.
+    # From 2026-12-01 the published rates are $4 / $0.20 / $20.
+    "gemini-4-argon": {"input": 2.0, "cached": 0.10, "output": 10.0},
     "gemini-3-pro": {"input": 2.0, "output": 12.0},
     "gemini-3.1-pro-preview": {"input": 2.0, "output": 12.0},
     # DeepSeek peak/off-peak dual-track pricing (effective 2026-08-16): cost
@@ -266,6 +270,8 @@ def get_pricing(model_id: str) -> Pricing | None:
         return MODEL_PRICING["glm-5.3-flash"].copy()
     if model_lower.startswith("glm-5.2") or model_lower == "glm-5.2":
         return MODEL_PRICING["glm-5.2"].copy()
+    if "gemini-4-argon" in model_lower:
+        return MODEL_PRICING["gemini-4-argon"].copy()
     if "gemini-3.8-flash" in model_lower:
         return MODEL_PRICING["gemini-3.8-flash"].copy()
     if "gemini-3.7-flash" in model_lower:

@@ -53,6 +53,8 @@ class TestGetPricing:
         assert get_pricing("gemini-3.7-flash") == {"input": 0.75, "cached": 0.075, "output": 3.75}
         assert get_pricing("gemini-3.5-flash") == {"input": 1.5, "cached": 0.15, "output": 9.0}
         assert get_pricing("gemini-3.1-pro-preview") == {"input": 2.0, "output": 12.0}
+        assert get_pricing("gemini-4-argon") == {"input": 2.0, "cached": 0.10, "output": 10.0}
+        assert get_pricing("gemini-4-argon-high") == {"input": 2.0, "cached": 0.10, "output": 10.0}
         # DeepSeek peak/off-peak dual track (2026-08-16): off-peak column.
         assert get_pricing("deepseek-v4-flash") == {"input": 0.22, "cached": 0.007, "output": 0.66}
         # v4-pro requests route to V4.1 Flash at flash rates since 2026-09-14.
