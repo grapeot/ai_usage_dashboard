@@ -83,6 +83,21 @@ class TestGetPricing:
         assert get_pricing("deepseek-chat") == {"input": 0.22, "cached": 0.007, "output": 0.66}
         assert get_pricing("deepseek-reasoner") == {"input": 0.22, "cached": 0.007, "output": 0.66}
 
+    def test_kimi_k31_pricing(self):
+        assert get_pricing("kimi-k3.1-pro") == {"input": 2.0, "cached": 0.2, "cache_write": 2.0, "output": 10.0}
+        assert get_pricing("kimi-k3.1-pro-highspeed") == {"input": 4.0, "cached": 0.2, "cache_write": 4.0, "output": 20.0}
+        assert get_pricing("kimi-k3") == {"input": 3.0, "cached": 0.3, "cache_write": 3.0, "output": 15.0}
+
+    def test_kimi_provider_prefixes_and_aliases(self):
+        assert get_pricing("moonshotai-cn/kimi-k3.1-pro") == get_pricing("kimi-k3.1-pro")
+        assert get_pricing("kimi-code-plan-cn/k3.1-pro") == get_pricing("kimi-k3.1-pro")
+        assert get_pricing("kimi-code-plan-global/k3.1-pro-highspeed") == get_pricing("kimi-k3.1-pro-highspeed")
+        assert get_pricing("k3-256k") == get_pricing("kimi-k3")
+        # Evaluation-preview coding ids price at the underlying model.
+        assert get_pricing("coding-kimi-k3.1-pro") == get_pricing("kimi-k3.1-pro")
+        # Suffix variants must not fall through to the base Pro rate.
+        assert get_pricing("kimi-k3.1-pro-highspeed:cloud") == get_pricing("kimi-k3.1-pro-highspeed")
+
     def test_deepseek_prefix_match(self):
         assert get_pricing("deepseek-v4-flash-thinking") == {"input": 0.22, "cached": 0.007, "output": 0.66}
         assert get_pricing("deepseek-v4.1-flash") == {"input": 0.22, "cached": 0.007, "output": 0.66}

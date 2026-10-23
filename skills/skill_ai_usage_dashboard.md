@@ -56,6 +56,7 @@ scripts/update-local-artifacts
 - DeepSeek
 - Grok
 - Qwen
+- Kimi
 - Other
 - Total
 - AI Hours

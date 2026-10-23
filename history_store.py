@@ -81,6 +81,7 @@ CREATE TABLE IF NOT EXISTS usage_daily (
     deepseek INTEGER DEFAULT 0,
     grok INTEGER DEFAULT 0,
     qwen INTEGER DEFAULT 0,
+    kimi INTEGER DEFAULT 0,
     other INTEGER DEFAULT 0,
     total_tokens INTEGER DEFAULT 0,
     cost_usd REAL,
@@ -112,6 +113,13 @@ def _connect(path: str | None = None) -> sqlite3.Connection:
         for name, sql_type in _CAPTURE_COLUMNS.items():
             if name not in columns:
                 conn.execute(f'ALTER TABLE quota_samples ADD COLUMN {name} {sql_type}')
+        conn.commit()
+    # usage_daily gained the kimi bucket after its initial schema; existing
+    # history DBs need the column added in place (CREATE TABLE IF NOT EXISTS
+    # does not alter an existing table).
+    usage_columns = {row['name'] for row in conn.execute('PRAGMA table_info(usage_daily)')}
+    if usage_columns and 'kimi' not in usage_columns:
+        conn.execute('ALTER TABLE usage_daily ADD COLUMN kimi INTEGER DEFAULT 0')
         conn.commit()
     return conn
 
@@ -235,9 +243,9 @@ def record_usage_daily(
             conn.execute(
                 """
                 INSERT INTO usage_daily
-                    (date, source, updated_at, cursor, glm, gemini, claude, gpt, deepseek, grok, qwen, other,
+                    (date, source, updated_at, cursor, glm, gemini, claude, gpt, deepseek, grok, qwen, kimi, other,
                      total_tokens, cost_usd, ai_hours)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(date) DO UPDATE SET
                     source = excluded.source,
                     updated_at = excluded.updated_at,
@@ -249,6 +257,7 @@ def record_usage_daily(
                     deepseek = excluded.deepseek,
                     grok = excluded.grok,
                     qwen = excluded.qwen,
+                    kimi = excluded.kimi,
                     other = excluded.other,
                     total_tokens = excluded.total_tokens,
                     cost_usd = excluded.cost_usd,
@@ -266,6 +275,7 @@ def record_usage_daily(
                     int(categories.get('deepseek', 0) or 0),
                     int(categories.get('grok', 0) or 0),
                     int(categories.get('qwen', 0) or 0),
+                    int(categories.get('kimi', 0) or 0),
                     int(categories.get('other', 0) or 0),
                     int(entry.get('total_tokens', 0) or 0),
                     entry.get('cost_usd'),

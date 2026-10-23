@@ -55,6 +55,7 @@ class DailyEntry:
     deepseek: int = 0
     grok: int = 0
     qwen: int = 0
+    kimi: int = 0
     other: int = 0
     total_tokens: int = 0
     ai_hours: float = 0.0
@@ -86,6 +87,7 @@ class DashboardData:
     deepseek: int = 0
     grok: int = 0
     qwen: int = 0
+    kimi: int = 0
     other: int = 0
     daily: list[DailyEntry] = field(default_factory=list)
     quotas: list[QuotaWindow] = field(default_factory=list)
@@ -418,6 +420,14 @@ def draw_legend_item_dotted(epaper: EPaperSim, x: int, y: int, fill_color: tuple
     epaper.draw_string(x + 18, y - 1, label)
 
 
+def draw_legend_item_crosshatch(epaper: EPaperSim, x: int, y: int, fill_color: tuple[int, int, int], label: str) -> None:
+    epaper.fill_rect(x, y, 12, 12, fill_color)
+    draw_diagonal_stripes(epaper, x, y, 12, 12, 4)
+    draw_reverse_diagonal_stripes(epaper, x, y, 12, 12, 4)
+    epaper.draw_rect(x, y, 12, 12, TFT_BLACK)
+    epaper.draw_string(x + 18, y - 1, label)
+
+
 def draw_axis_and_ticks(epaper: EPaperSim, rect: ChartRect, max_value: float, axis_label: str, tick_count: int) -> None:
     epaper.draw_rect(rect.x, rect.y, rect.w, rect.h, TFT_BLACK)
     epaper.draw_string(rect.x, rect.y - 14, axis_label)
@@ -442,6 +452,7 @@ def draw_stacked_chart(epaper: EPaperSim, data: DashboardData, rect: ChartRect, 
         y_bottom = rect.y + rect.h
         segments = [
             # Gemini: white + diagonal stripes (/). Grok: white + dots. Qwen: white + reverse stripes (\).
+            # Kimi: white + crosshatch (both stripe directions).
             (data.daily[i].cursor, TFT_WHITE, True, False, False, False),
             (data.daily[i].glm, TFT_GREEN, False, False, False, False),
             (data.daily[i].gemini, TFT_WHITE, False, True, False, False),
@@ -450,6 +461,7 @@ def draw_stacked_chart(epaper: EPaperSim, data: DashboardData, rect: ChartRect, 
             (data.daily[i].deepseek, TFT_BLUE, False, False, False, False),
             (data.daily[i].grok, TFT_WHITE, False, False, True, False),
             (data.daily[i].qwen, TFT_WHITE, False, False, False, True),
+            (data.daily[i].kimi, TFT_WHITE, False, True, False, True),
             (data.daily[i].other, TFT_BLACK, False, False, False, False),
         ]
         for value, color, border_only, striped, dotted, reverse_striped in segments:
@@ -544,6 +556,8 @@ def render_dashboard(data: DashboardData, battery: BatteryStatus, mode: str = SE
     draw_legend_item_dotted(epaper, 570, 48, TFT_WHITE, "Grok")
     draw_legend_item_reverse_striped(epaper, 640, 48, TFT_WHITE, "Qwen")
     draw_legend_item(epaper, 715, 48, TFT_BLACK, "Other")
+    # Fourth legend row still clears the chart/quota zone starting at y=92.
+    draw_legend_item_crosshatch(epaper, 570, 66, TFT_WHITE, "Kimi")
 
     epaper.draw_string(610, 456, f"Battery: {battery.percentage}% ({battery.voltage:.2f}V)")
 
@@ -578,6 +592,7 @@ def parse_dashboard_payload(payload: dict) -> DashboardData:
     data.deepseek = int(cats.get("deepseek", 0))
     data.grok = int(cats.get("grok", 0))
     data.qwen = int(cats.get("qwen", 0))
+    data.kimi = int(cats.get("kimi", 0))
     data.other = int(cats.get("other", 0))
 
     for day in payload.get("daily", []):
@@ -594,6 +609,7 @@ def parse_dashboard_payload(payload: dict) -> DashboardData:
         entry.deepseek = int(dc.get("deepseek", 0))
         entry.grok = int(dc.get("grok", 0))
         entry.qwen = int(dc.get("qwen", 0))
+        entry.kimi = int(dc.get("kimi", 0))
         entry.other = int(dc.get("other", 0))
         entry.total_tokens = int(day.get("total_tokens", 0))
         entry.ai_hours = float(day.get("ai_hours", 0.0) or 0.0)

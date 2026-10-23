@@ -341,7 +341,7 @@ class TestLoadAntigravity:
              patch('auto_usage._save_antigravity_cache'):
             result = load_antigravity()
         assert all(v == {} for v in result.values())
-        assert set(result.keys()) == {'gemini', 'anthropic', 'gpt_opencode', 'deepseek', 'qwen', 'opencode_other'}
+        assert set(result.keys()) == {'gemini', 'anthropic', 'gpt_opencode', 'deepseek', 'qwen', 'kimi', 'opencode_other'}
 
     def test_basic_flow(self):
         conn = AntigravityConnection(pid=1, port=9999, csrf_token="x")

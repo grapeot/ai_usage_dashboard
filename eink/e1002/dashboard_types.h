@@ -25,6 +25,7 @@ struct DailyEntry {
   uint64_t deepseek;
   uint64_t grok;
   uint64_t qwen;
+  uint64_t kimi;
   uint64_t other;
   uint64_t totalTokens;
   double aiHours;
@@ -54,6 +55,7 @@ struct DashboardData {
   uint64_t deepseek;
   uint64_t grok;
   uint64_t qwen;
+  uint64_t kimi;
   uint64_t other;
   DailyEntry daily[kMaxDays];
   size_t dailyCount;
