@@ -207,7 +207,9 @@ def classify_model_bucket(provider_id: str, model_id: str, *, include_glm: bool 
     if 'qwen' in provider_lower or 'qwen' in model_lower:
         return 'qwen'
     # Moonshot API (moonshotai-cn/moonshotai) and Kimi For Coding plan
-    # (kimi-code-plan-cn/global, bare ids like k3.1-pro) both land in Kimi.
+    # (kimi-code-plan-cn/global) both land in Kimi. Bare coding-plan ids like
+    # k3.1-pro rely on the kimi-code-plan provider prefix; the model-id match
+    # below only covers ids that start with kimi/moonshot themselves.
     if 'moonshot' in provider_lower or 'kimi' in provider_lower or model_lower.startswith(('kimi', 'moonshot')):
         return 'kimi'
     return 'opencode_other'

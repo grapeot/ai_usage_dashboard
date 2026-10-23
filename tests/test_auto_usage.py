@@ -435,6 +435,21 @@ def test_build_eink_dashboard_payload_emits_minimal_device_friendly_shape():
     }
 
 
+def test_generate_dashboard_prints_kimi_column_and_total(capsys):
+    generate_dashboard(
+        cursor={}, glm={}, gemini={}, claude={}, gpt_opencode={}, deepseek={},
+        grok={}, qwen={}, kimi={date(2026, 10, 23): 42}, other={},
+        start_date='2026-10-23', end_date='2026-10-23',
+        daily_costs=None, daily_active_seconds=None, skip_desktop_chart=True,
+    )
+    out = capsys.readouterr().out
+    assert 'Kimi' in out
+    total_line = next(line for line in out.splitlines() if line.strip().startswith('TOTAL'))
+    # Columns: Date Cursor GLM Gemini Claude GPT DeepSeek Grok Qwen Kimi Other Total AI Hours.
+    assert total_line.split()[9] == '42'
+    assert total_line.split()[11] == '42'
+
+
 def test_build_eink_dashboard_payload_includes_kimi_bucket():
     payload = build_eink_dashboard_payload(
         cursor={}, glm={}, gemini={}, claude={}, gpt_opencode={}, deepseek={},

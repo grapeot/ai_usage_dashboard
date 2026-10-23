@@ -93,6 +93,8 @@ class TestGetPricing:
         assert get_pricing("kimi-code-plan-cn/k3.1-pro") == get_pricing("kimi-k3.1-pro")
         assert get_pricing("kimi-code-plan-global/k3.1-pro-highspeed") == get_pricing("kimi-k3.1-pro-highspeed")
         assert get_pricing("k3-256k") == get_pricing("kimi-k3")
+        assert get_pricing("k3") == get_pricing("kimi-k3")
+        assert get_pricing("kimi-for-coding-highspeed") == get_pricing("kimi-k2.7-code-highspeed")
         # Evaluation-preview coding ids price at the underlying model.
         assert get_pricing("coding-kimi-k3.1-pro") == get_pricing("kimi-k3.1-pro")
         # Suffix variants must not fall through to the base Pro rate.

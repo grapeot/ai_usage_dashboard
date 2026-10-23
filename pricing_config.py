@@ -120,8 +120,11 @@ MODEL_PRICING = {
     "deepseek-reasoner": {"input": 0.22, "cached": 0.007, "output": 0.66},
     "grok-build-0.1": {"input": 1.0, "cached": 0.2, "output": 2.0},
     # Moonshot Kimi (2026-10-23, models.dev catalog + Kimi API pricing page).
-    # K3.1 Pro launched at $2/$10, 33% below K3's $3/$15; Highspeed is the same
-    # model served faster at exactly 2x input/output, cache read unchanged.
+    # K3.1 Pro launched at $2/$10, 33% below K3's $3/$15; K3.1 Pro Highspeed
+    # is the same model served faster at exactly 2x input/output, cache read
+    # unchanged. K2.7 Code Highspeed doubles all three rates per the catalog.
+    # kimi-for-coding (K2.8 Preview, coding-plan only) has no published
+    # per-token price and is intentionally left unpriced.
     "kimi-k3": {"input": 3.0, "cached": 0.3, "cache_write": 3.0, "output": 15.0},
     "kimi-k3.1-pro": {"input": 2.0, "cached": 0.2, "cache_write": 2.0, "output": 10.0},
     "kimi-k3.1-pro-highspeed": {"input": 4.0, "cached": 0.2, "cache_write": 4.0, "output": 20.0},
@@ -172,6 +175,9 @@ MODEL_ALIASES = {
     # OpenRouter free variant of Qwen3.8 27B bills $0.
     "qwen/qwen3.8-27b:free": "local-free",
     # Kimi For Coding plan (kimi-code-plan-cn/global) uses bare model ids.
+    # kimi-for-coding itself is K2.8 Preview (no published rate); its highspeed
+    # variant is canonically kimi-k2.7-code-highspeed per models.dev.
+    "kimi-for-coding-highspeed": "kimi-k2.7-code-highspeed",
     "k3": "kimi-k3",
     "k3-256k": "kimi-k3",
     "k3.1-pro": "kimi-k3.1-pro",
