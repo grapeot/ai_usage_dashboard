@@ -70,6 +70,8 @@ def classify_model(
         return 'gpt_opencode'
     if 'deepseek' in model:
         return 'deepseek'
+    if 'kimi' in model or 'moonshot' in model:
+        return 'kimi'
     if 'qwen' in model:
         return 'qwen'
     return 'opencode_other'
@@ -765,6 +767,7 @@ def load_usage(
         'gpt_opencode': defaultdict(int),
         'deepseek': defaultdict(int),
         'qwen': defaultdict(int),
+        'kimi': defaultdict(int),
         'opencode_other': defaultdict(int),
     }
     for entry in all_entries:

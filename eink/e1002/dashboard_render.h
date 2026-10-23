@@ -75,6 +75,17 @@ inline void drawLegendItemDotted(EPaper& epaper, int x, int y, uint16_t fillColo
   epaper.drawString(label, x + 18, y - 1);
 }
 
+// White fill with both diagonal directions overlaid (Kimi crosshatch).
+inline void drawLegendItemCrosshatch(EPaper& epaper, int x, int y, uint16_t fillColor, const String& label) {
+  epaper.fillRect(x, y, 12, 12, fillColor);
+  drawDiagonalStripes(epaper, x, y, 12, 12, 4);
+  drawReverseDiagonalStripes(epaper, x, y, 12, 12, 4);
+  epaper.drawRect(x, y, 12, 12, TFT_BLACK);
+  epaper.setTextColor(TFT_BLACK, TFT_WHITE);
+  epaper.setTextSize(1);
+  epaper.drawString(label, x + 18, y - 1);
+}
+
 inline void drawAxisAndTicks(EPaper& epaper, const ChartRect& rect, double maxValue, const char* axisLabel, int tickCount) {
   epaper.drawRect(rect.x, rect.y, rect.w, rect.h, TFT_BLACK);
   epaper.setTextColor(TFT_BLACK, TFT_WHITE);
@@ -117,6 +128,7 @@ inline void drawStackedChart(EPaper& epaper, const DashboardData& data, const Ch
       bool reverseStriped;
     } segments[] = {
         // Gemini: white + diagonal stripes (/). Grok: white + dots. Qwen: white + reverse stripes (\).
+        // Kimi: white + crosshatch (both stripe directions).
         {data.daily[i].cursor, TFT_WHITE, true, false, false, false},
         {data.daily[i].glm, TFT_GREEN, false, false, false, false},
         {data.daily[i].gemini, TFT_WHITE, false, true, false, false},
@@ -125,6 +137,7 @@ inline void drawStackedChart(EPaper& epaper, const DashboardData& data, const Ch
         {data.daily[i].deepseek, TFT_BLUE, false, false, false, false},
         {data.daily[i].grok, TFT_WHITE, false, false, true, false},
         {data.daily[i].qwen, TFT_WHITE, false, false, false, true},
+        {data.daily[i].kimi, TFT_WHITE, false, true, false, true},
         {data.daily[i].other, TFT_BLACK, false, false, false, false},
     };
 
@@ -280,6 +293,8 @@ inline void renderDashboard(EPaper& epaper,
   drawLegendItemDotted(epaper, 570, 48, TFT_WHITE, "Grok");
   drawLegendItemReverseStriped(epaper, 640, 48, TFT_WHITE, "Qwen");
   drawLegendItem(epaper, 715, 48, TFT_BLACK, "Other");
+  // Fourth legend row still clears the chart/quota zone starting at y=92.
+  drawLegendItemCrosshatch(epaper, 570, 66, TFT_WHITE, "Kimi");
 
   char batteryBuffer[48];
   snprintf(batteryBuffer, sizeof(batteryBuffer), "Battery: %d%% (%.2fV)", battery.percentage, battery.voltage);

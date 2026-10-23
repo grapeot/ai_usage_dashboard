@@ -119,6 +119,17 @@ MODEL_PRICING = {
     "deepseek-chat": {"input": 0.22, "cached": 0.007, "output": 0.66},
     "deepseek-reasoner": {"input": 0.22, "cached": 0.007, "output": 0.66},
     "grok-build-0.1": {"input": 1.0, "cached": 0.2, "output": 2.0},
+    # Moonshot Kimi (2026-10-23, models.dev catalog + Kimi API pricing page).
+    # K3.1 Pro launched at $2/$10, 33% below K3's $3/$15; K3.1 Pro Highspeed
+    # is the same model served faster at exactly 2x input/output, cache read
+    # unchanged. K2.7 Code Highspeed doubles all three rates per the catalog.
+    # kimi-for-coding (K2.8 Preview, coding-plan only) has no published
+    # per-token price and is intentionally left unpriced.
+    "kimi-k3": {"input": 3.0, "cached": 0.3, "cache_write": 3.0, "output": 15.0},
+    "kimi-k3.1-pro": {"input": 2.0, "cached": 0.2, "cache_write": 2.0, "output": 10.0},
+    "kimi-k3.1-pro-highspeed": {"input": 4.0, "cached": 0.2, "cache_write": 4.0, "output": 20.0},
+    "kimi-k2.7-code": {"input": 1.0, "cached": 0.2, "output": 4.0},
+    "kimi-k2.7-code-highspeed": {"input": 2.0, "cached": 0.4, "output": 8.0},
     "kimi-k2.6": {"input": 0.95, "cached": 0.16, "output": 4.0},
     "minimax-m3": {"input": 0.3, "cached": 0.06, "output": 1.2},
     # Alibaba Model Studio international (Singapore) rates.
@@ -163,6 +174,14 @@ MODEL_ALIASES = {
     "qwen3.5-397b": "qwen3.5-397b-a17b",
     # OpenRouter free variant of Qwen3.8 27B bills $0.
     "qwen/qwen3.8-27b:free": "local-free",
+    # Kimi For Coding plan (kimi-code-plan-cn/global) uses bare model ids.
+    # kimi-for-coding itself is K2.8 Preview (no published rate); its highspeed
+    # variant is canonically kimi-k2.7-code-highspeed per models.dev.
+    "kimi-for-coding-highspeed": "kimi-k2.7-code-highspeed",
+    "k3": "kimi-k3",
+    "k3-256k": "kimi-k3",
+    "k3.1-pro": "kimi-k3.1-pro",
+    "k3.1-pro-highspeed": "kimi-k3.1-pro-highspeed",
     # DSH routes Z.ai GLM 5.3 through its own client; same published rates.
     "zai/glm-5.3": "glm-5.3",
     "zai/glm-5.2": "glm-5.2",
@@ -184,7 +203,7 @@ def get_pricing(model_id: str) -> Pricing | None:
     # collapse to the billable model name.
     while "/" in model_lower:
         prefix, remainder = model_lower.split("/", 1)
-        if prefix in {"xai", "x-ai", "openrouter", "opencode", "ollama-cloud", "deepseek-official"} and remainder:
+        if prefix in {"xai", "x-ai", "openrouter", "opencode", "ollama-cloud", "deepseek-official", "moonshotai", "moonshotai-cn", "kimi-code-plan-cn", "kimi-code-plan-global"} and remainder:
             model_lower = remainder
             continue
         break
@@ -301,6 +320,20 @@ def get_pricing(model_id: str) -> Pricing | None:
         return MODEL_PRICING["deepseek-v4-flash"].copy()
     if model_lower.startswith("deepseek-"):
         return MODEL_PRICING["deepseek-v4-flash"].copy()
+    # Kimi Code evaluation-preview ids carry a coding- prefix on the same models.
+    if model_lower.startswith("coding-kimi-"):
+        model_lower = model_lower[len("coding-"):]
+    # Highspeed must match before the base id it prefixes.
+    if model_lower.startswith("kimi-k3.1-pro-highspeed"):
+        return MODEL_PRICING["kimi-k3.1-pro-highspeed"].copy()
+    if model_lower.startswith("kimi-k3.1-pro"):
+        return MODEL_PRICING["kimi-k3.1-pro"].copy()
+    if model_lower.startswith("kimi-k3"):
+        return MODEL_PRICING["kimi-k3"].copy()
+    if model_lower.startswith("kimi-k2.7-code-highspeed"):
+        return MODEL_PRICING["kimi-k2.7-code-highspeed"].copy()
+    if model_lower.startswith("kimi-k2.7-code"):
+        return MODEL_PRICING["kimi-k2.7-code"].copy()
     if model_lower.startswith("kimi-k2.6"):
         return MODEL_PRICING["kimi-k2.6"].copy()
     if model_lower.startswith("minimax-m3"):

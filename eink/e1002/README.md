@@ -78,13 +78,13 @@ The screen is split into two vertical zones:
 
 - Title at y=14: `<tokens> tokens | $<cost> | 7D/30D`
 - AI Active Time total at y=30, directly under the title
-- Stacked token bar chart at y=92, height 200: 7 bars (7-day mode) or 30 bars (30-day mode), colored by provider (Cursor=white border, GLM=green, Gemini=striped white, Claude=red, GPT=yellow, DeepSeek=blue, Grok=dotted white, Qwen=reverse-striped white, Other=black)
+- Stacked token bar chart at y=92, height 200: 7 bars (7-day mode) or 30 bars (30-day mode), colored by provider (Cursor=white border, GLM=green, Gemini=striped white, Claude=red, GPT=yellow, DeepSeek=blue, Grok=dotted white, Qwen=reverse-striped white, Kimi=crosshatched white, Other=black)
 - AI Active Hours chart at y=336, height 88: blue bars, same x-axis as the stacked chart
 - Footer at y=456: `Updated: <timestamp> , Auto 08-22`
 
 **Right zone** (x=585..780, width 195):
 
-- Legend in the top-right header (y=12..48): colored 12x12 squares with labels
+- Legend in the top-right header (y=12..66): colored 12x12 squares with labels
 - `Quotas` header at y=92
 - One horizontal usage bar per quota window, stacked vertically. Each bar is 14px tall with a filled colored portion (GLM=green, Ollama=cyan, Codex=yellow, Claude=red, Grok=black, Cursor=black) and a black outline. On the 1-bit panel every solid color packs under the threshold and renders black; a mid-gray fill would pack over it and render white (a full bar looking empty), so provider identity is carried by the label text, not the fill. Below each bar, one line of text: `<Provider> <label>, reset in Xd Yh` (or `reset in X.Yh` when less than a day remains). The reset countdown is computed from the NTP-synchronized local clock.
 - Labels are compact: `5h` for 5-hour windows, `7d` for weekly windows, `Monthly`-style window names otherwise

@@ -110,6 +110,29 @@ def test_usage_daily_upserts_by_date(hist_db):
     assert rows[0]['cost_usd'] == 2.5
 
 
+def test_usage_daily_adds_kimi_column_to_legacy_db(hist_db):
+    # Legacy history DBs predate the kimi bucket; recording must migrate them
+    # in place instead of failing the upsert.
+    import sqlite3
+    conn = sqlite3.connect(hist_db)
+    conn.executescript(history_store._SCHEMA)
+    conn.execute('ALTER TABLE usage_daily DROP COLUMN kimi')
+    conn.execute("INSERT INTO usage_daily (date, source, updated_at, total_tokens) VALUES ('2026-10-01', 'dashboard', '2026-10-01', 10)")
+    conn.commit()
+    conn.close()
+
+    history_store.record_usage_daily([{
+        'date': '2026-10-23',
+        'categories': {'kimi': 42},
+        'total_tokens': 42,
+        'cost_usd': 0.1,
+        'ai_hours': 0.0,
+    }])
+    rows = history_store.usage_history()
+    assert rows[-1]['kimi'] == 42
+    assert rows[0]['date'] == '2026-10-01'
+
+
 def test_quota_history_filters(hist_db):
     history_store.record_quota_snapshots([_quota(provider='ollama', label='5h'), _quota(provider='ollama', label='7d')])
     assert len(history_store.quota_history(provider='ollama')) == 2

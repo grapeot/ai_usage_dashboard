@@ -126,6 +126,25 @@ def test_classify_opencode_bucket_qwen_provider_maps_to_qwen():
     assert classify_opencode_bucket('qwen38', 'qwen3.8-27b') == 'qwen'
 
 
+def test_classify_opencode_bucket_moonshot_provider_maps_to_kimi():
+    assert classify_opencode_bucket('moonshotai-cn', 'kimi-k3.1-pro') == 'kimi'
+    assert classify_opencode_bucket('moonshotai', 'kimi-k3.1-pro-highspeed') == 'kimi'
+
+
+def test_classify_opencode_bucket_kimi_coding_plan_maps_to_kimi():
+    # Kimi For Coding uses bare model ids (k3.1-pro, kimi-for-coding).
+    assert classify_opencode_bucket('kimi-code-plan-cn', 'k3.1-pro') == 'kimi'
+    assert classify_opencode_bucket('kimi-code-plan-global', 'kimi-for-coding') == 'kimi'
+
+
+def test_classify_model_bucket_kimi_by_model_identity():
+    assert classify_model_bucket('other', 'kimi-k3') == 'kimi'
+
+
+def test_classify_dsh_bucket_kimi_maps_to_kimi():
+    assert classify_dsh_bucket('moonshotai-cn/kimi-k3.1-pro') == 'kimi'
+
+
 def test_classify_opencode_bucket_qwen_model_maps_to_qwen():
     assert classify_opencode_bucket('local', 'qwen-122b') == 'qwen'
 
@@ -330,6 +349,7 @@ def test_generate_dashboard_keeps_est_cost_column_when_daily_costs_is_empty_dict
         deepseek={},
         grok={},
         qwen={},
+        kimi={},
         other={},
         start_date='2026-03-12',
         end_date='2026-03-12',
@@ -364,6 +384,7 @@ def test_build_eink_dashboard_payload_emits_minimal_device_friendly_shape():
         deepseek={},
         grok={},
         qwen={},
+        kimi={},
         other={},
         start_date='2026-03-12',
         end_date='2026-03-13',
@@ -390,6 +411,7 @@ def test_build_eink_dashboard_payload_emits_minimal_device_friendly_shape():
         'deepseek': 0,
         'grok': 0,
         'qwen': 0,
+        'kimi': 0,
         'other': 0,
     }
     assert len(daily) == 2
@@ -404,12 +426,43 @@ def test_build_eink_dashboard_payload_emits_minimal_device_friendly_shape():
             'deepseek': 0,
             'grok': 0,
             'qwen': 0,
+            'kimi': 0,
             'other': 0,
         },
         'total_tokens': 135,
         'ai_hours': 1.5,
         'cost_usd': 1.23,
     }
+
+
+def test_generate_dashboard_prints_kimi_column_and_total(capsys):
+    generate_dashboard(
+        cursor={}, glm={}, gemini={}, claude={}, gpt_opencode={}, deepseek={},
+        grok={}, qwen={}, kimi={date(2026, 10, 23): 42}, other={},
+        start_date='2026-10-23', end_date='2026-10-23',
+        daily_costs=None, daily_active_seconds=None, skip_desktop_chart=True,
+    )
+    out = capsys.readouterr().out
+    assert 'Kimi' in out
+    total_line = next(line for line in out.splitlines() if line.strip().startswith('TOTAL'))
+    # Columns: Date Cursor GLM Gemini Claude GPT DeepSeek Grok Qwen Kimi Other Total AI Hours.
+    assert total_line.split()[9] == '42'
+    assert total_line.split()[11] == '42'
+
+
+def test_build_eink_dashboard_payload_includes_kimi_bucket():
+    payload = build_eink_dashboard_payload(
+        cursor={}, glm={}, gemini={}, claude={}, gpt_opencode={}, deepseek={},
+        grok={}, qwen={}, kimi={date(2026, 10, 23): 42}, other={},
+        start_date='2026-10-23', end_date='2026-10-23',
+    )
+
+    summary = cast(dict[str, object], payload['summary'])
+    categories = cast(dict[str, int], summary['categories'])
+    assert categories['kimi'] == 42
+    assert summary['total_tokens'] == 42
+    daily = cast(list[dict[str, object]], payload['daily'])
+    assert cast(dict[str, int], daily[0]['categories'])['kimi'] == 42
 
 
 def test_load_codex_returns_empty_when_export_missing(tmp_path):
@@ -785,6 +838,7 @@ def test_load_opencode_from_db_returns_empty_when_db_missing(monkeypatch, tmp_pa
         'glm_opencode': {},
         'deepseek': {},
         'grok': {},
+        'kimi': {},
         'opencode_other': {},
     }
 
@@ -1033,6 +1087,7 @@ def test_build_eink_dashboard_payload_includes_glm_quota_when_provided():
         deepseek={},
         grok={},
         qwen={},
+        kimi={},
         other={},
         start_date='2026-06-22',
         end_date='2026-06-28',
@@ -1055,6 +1110,7 @@ def test_build_eink_dashboard_payload_omits_glm_quota_when_empty():
         deepseek={},
         grok={},
         qwen={},
+        kimi={},
         other={},
         start_date='2026-06-22',
         end_date='2026-06-28',
@@ -1076,6 +1132,7 @@ def test_generate_dashboard_prints_quota_block(capsys):
         deepseek={},
         grok={},
         qwen={},
+        kimi={},
         other={},
         start_date='2026-06-22',
         end_date='2026-06-22',
@@ -1176,7 +1233,7 @@ def test_build_eink_dashboard_payload_includes_unified_quotas_when_provided():
     quotas = normalize_codex_rate_limits(_CODEX_RATE_LIMITS)
 
     payload = build_eink_dashboard_payload(
-        cursor={}, glm={}, gemini={}, claude={}, gpt_opencode={}, deepseek={}, grok={}, qwen={}, other={},
+        cursor={}, glm={}, gemini={}, claude={}, gpt_opencode={}, deepseek={}, grok={}, qwen={}, kimi={}, other={},
         start_date='2026-06-22', end_date='2026-06-28',
         quotas=quotas,
     )
@@ -1189,7 +1246,7 @@ def test_build_eink_dashboard_payload_includes_unified_quotas_when_provided():
 
 def test_build_eink_dashboard_payload_omits_quotas_when_empty():
     payload = build_eink_dashboard_payload(
-        cursor={}, glm={}, gemini={}, claude={}, gpt_opencode={}, deepseek={}, grok={}, qwen={}, other={},
+        cursor={}, glm={}, gemini={}, claude={}, gpt_opencode={}, deepseek={}, grok={}, qwen={}, kimi={}, other={},
         start_date='2026-06-22', end_date='2026-06-28',
         quotas=[],
     )

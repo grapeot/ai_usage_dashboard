@@ -39,6 +39,7 @@ class CategoryTotals(BaseModel):
     deepseek: int = Field(default=0, description='Total DeepSeek tokens for the window.')
     grok: int = Field(default=0, description='Total xAI Grok tokens for the window (OpenCode xai/grok-* and related routes).')
     qwen: int = Field(default=0, description='Total Qwen tokens for the window (OpenCode/Antigravity routes whose provider or model name contains "qwen").')
+    kimi: int = Field(default=0, description='Total Moonshot Kimi tokens for the window (moonshotai-cn/moonshotai API and kimi-code-plan-cn/global coding-plan routes).')
     other: int = Field(default=0, description='Total tokens from providers not classified into the buckets above.')
 
 
