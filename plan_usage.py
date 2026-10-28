@@ -26,7 +26,7 @@ def window_kind(plan: str, label: str) -> str:
     lower = label.lower()
     if plan == 'cursor':
         return 'monthly'
-    if 'week' in lower or lower == '7d':
+    if 'week' in lower or lower.split()[-1:] == ['7d']:
         return 'weekly'
     if '5h' in lower or '5 hour' in lower:
         return '5h'
@@ -50,8 +50,16 @@ def _pool_records(plan: str, label: str, samples: list[dict], usage: list[UsageE
             continue
         if plan == 'antigravity':
             import antigravity_usage
-            family = label.split()[0]
-            if antigravity_usage.model_family('', event.model) != family:
+            family = antigravity_usage.model_family('', event.model)
+            sample = samples[0]
+            if sample.get('quota_scope') == 'shared_bucket':
+                pool = sample.get('pool_id')
+                allowed = ({'Gemini'} if pool in ('antigravity:gemini-weekly', 'antigravity:gemini-5h')
+                           else {'Claude', 'GPT'} if pool in ('antigravity:3p-weekly', 'antigravity:3p-5h')
+                           else set())
+            else:
+                allowed = {label.split()[0]}
+            if family not in allowed:
                 continue
         result.append(event)
     return sorted(result, key=lambda e: utc_time(e.time))
@@ -114,7 +122,13 @@ def estimate_segment(plan: str, label: str, samples: list[dict], usage: list[Usa
         result['status'] = 'usage_missing'
         result['reason'] = 'Quota changed, but no corresponding local usage was found.'
         return result
-    if plan == 'antigravity':
+    if plan == 'antigravity' and not (
+        first.get('quota_scope') == 'shared_bucket'
+        and first.get('pool_id') in (
+            'antigravity:gemini-weekly', 'antigravity:gemini-5h',
+            'antigravity:3p-weekly', 'antigravity:3p-5h',
+        )
+    ):
         result['status'] = 'quota_scope_unresolved'
         result['reason'] = 'Per-family maxima do not identify which model allocations share a billing pool.'
         return result

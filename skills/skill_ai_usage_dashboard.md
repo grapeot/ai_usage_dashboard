@@ -17,6 +17,7 @@ This skill is local-first. It reads data from the user's machine and writes loca
 - GLM/Z.ai: optional `GLM_BEARER_TOKEN` in `.env`. When present, the dashboard fetches the coding-plan **quota** snapshot (5-hour / weekly token quotas and the monthly web-search/reader/zread quota) and prints it after the token table; the same snapshot is embedded in the JSON payload under `glm_quota`. GLM **usage** comes from the local OpenCode database, not the cloud API.
 - Ollama: optional `OLLAMA_COOKIE` in `.env` (full browser cookie string from ollama.com/settings). When present, the dashboard fetches the settings HTML and parses the Session (5h) and Weekly usage bars into the unified `quotas` array.
 - Codex: no key required. Usage is read from the local rollout JSONL under `~/.codex/sessions` (timestamp-precise, per-turn input/cache/output split); the same files provide `rate_limits` for quota.
+- Antigravity: a running local Language Server exposes `RetrieveUserQuotaSummary`. A genuine refresh records separate `Gemini 7d` / `Gemini 5h` and shared `Claude/GPT 7d` / `Claude/GPT 5h` buckets, identified by stable upstream bucket IDs and `quota_scope=shared_bucket`. Fractions are preserved through API and history. Older servers fall back to per-family `quota` readings with unresolved window scope (`family_max`); those must not be assumed to be five-hour windows or calibrated as independent pools.
 
 Never print `.env`, cookies, bearer tokens, generated usage exports, or local dashboard JSON unless the user explicitly asks for a sanitized excerpt.
 
@@ -137,8 +138,9 @@ selected plan's state, including unsupported or incomplete measurements.
 Use `estimated` or `known_limit` only with their stated assumptions. Inspect
 `usage_missing` / `usage_incomplete`, `quota_scope_unresolved`, `saturated`,
 `quota_stale`, `quota_unavailable`, window-identity states, or
-`unstable_measurement` before making a capacity claim. Antigravity family
-maxima do not identify shared billing allocations; detected native Grok CLI
+`unstable_measurement` before making a capacity claim. Legacy Antigravity family
+maxima do not identify shared billing allocations; explicit shared buckets do.
+Detected native Grok CLI
 activity is not covered by the token adapters. Genuine missing data is not $0
 capacity, and a meter that does not move is not an unlimited plan.
 

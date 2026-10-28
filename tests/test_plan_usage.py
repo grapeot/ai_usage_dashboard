@@ -119,6 +119,26 @@ def test_moving_antigravity_family_deadlines_are_not_claimed_as_early_refills():
     assert all(e['kind'] == 'window_identity_changed' for e in result['reset_events'])
 
 
+@pytest.mark.parametrize('label,pool,models', [
+    ('Gemini 7d', 'gemini-weekly', ['gemini-4-argon', 'gemini-3-flash']),
+    ('Gemini 5h', 'gemini-5h', ['gemini-4-argon', 'gemini-3-flash']),
+    ('Claude/GPT 7d', '3p-weekly', ['claude-sonnet-4.6', 'gpt-oss-120b']),
+])
+def test_explicit_antigravity_buckets_calibrate_only_their_shared_models(label, pool, models):
+    samples = [sample(i, i * 10, 'antigravity', label, quota_scope='shared_bucket',
+                      pool_id=f'antigravity:{pool}') for i in range(3)]
+    events = [event(0.5, 10, 'antigravity', model=models[0]),
+              event(1.5, 10, 'antigravity', model=models[1]),
+              event(1.5, 999, 'antigravity', model='gemini-flash' if pool.startswith('3p') else 'claude-sonnet-4.6')]
+    result = plan_usage.analyze_plan('antigravity', samples, events)
+    window = result['windows'][0]
+    assert result['status'] == 'estimated'
+    assert window['capacity_usd'] == pytest.approx(100)
+    assert window['records'] == 2
+    assert window['window_kind'] == ('weekly' if label.endswith('7d') else '5h')
+    assert (window['monthly_equivalent_usd'] is None) == label.endswith('5h')
+
+
 def test_source_errors_prevent_complete_capacity_claims():
     samples = [sample(0, 0), sample(1, 10), sample(2, 20)]
     result = plan_usage.analyze_plan('grok', samples, [event(0.5, 10), event(1.5, 10)], source_errors={'opencode': 'OSError'})
