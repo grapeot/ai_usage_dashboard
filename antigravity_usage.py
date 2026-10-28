@@ -7,6 +7,7 @@ the orchestration functions below.
 
 import glob
 import json
+import math
 import quota_capture
 import os
 import socket
@@ -880,6 +881,52 @@ def model_family(label: str, model_id: str) -> str:
     return 'Other'
 
 
+def parse_quota_summary(response: dict | None) -> list[dict]:
+    """Read independent shared buckets, preserving fractional quota movement."""
+    body = response.get('response') if isinstance(response, dict) else None
+    groups = body.get('groups') if isinstance(body, dict) else None
+    if not isinstance(groups, list):
+        return []
+    snapshots: dict[str, dict] = {}
+    for group in groups:
+        if not isinstance(group, dict) or not isinstance(group.get('buckets'), list):
+            continue
+        for bucket in group['buckets']:
+            if not isinstance(bucket, dict) or bucket.get('disabled'):
+                continue
+            bucket_id = bucket.get('bucketId')
+            window = bucket.get('window')
+            # Do not infer shared billing scope for unrecognized future buckets.
+            if bucket_id not in ('gemini-weekly', 'gemini-5h', '3p-weekly', '3p-5h'):
+                continue
+            if window != ('weekly' if bucket_id.endswith('-weekly') else '5h'):
+                continue
+            remaining = bucket.get('remainingFraction')
+            if isinstance(remaining, bool) or not isinstance(remaining, (int, float)):
+                continue
+            if not math.isfinite(remaining) or not 0 <= remaining <= 1:
+                continue
+            reset = bucket.get('resetTime')
+            try:
+                parsed = datetime.fromisoformat(reset.replace('Z', '+00:00'))
+                if parsed.tzinfo is None:
+                    continue
+                reset_ms = int(parsed.timestamp() * 1000)
+            except (AttributeError, ValueError, TypeError, OverflowError):
+                continue
+            family = 'Gemini' if bucket_id.startswith('gemini-') else 'Claude/GPT'
+            snapshots[bucket_id] = {
+                'provider': 'antigravity',
+                'pool_id': f'antigravity:{bucket_id}',
+                'quota_scope': 'shared_bucket',
+                'label': f'{family} {"7d" if window == "weekly" else "5h"}',
+                'percentage': quota_capture.fraction_used(remaining),
+                'next_reset_time_ms': reset_ms,
+                'next_reset_iso': parsed.astimezone().replace(tzinfo=None).isoformat(timespec='minutes'),
+            }
+    return list(snapshots.values())
+
+
 def export_quota(
     *,
     discover: Callable[[], list[AntigravityConnection]],
@@ -889,6 +936,12 @@ def export_quota(
     connections = discover()
     if not connections:
         return []
+    for connection in connections:
+        summary = parse_quota_summary(rpc_call(connection, 'RetrieveUserQuotaSummary', {'forceRefresh': True}))
+        if summary:
+            return summary
+    # Older language servers expose only a per-model bottleneck reading.
+    # Keep it distinguishable from independently identified shared buckets.
     response = None
     for connection in connections:
         response = rpc_call(connection, 'GetCascadeModelConfigData', {})
@@ -954,7 +1007,7 @@ def export_quota(
             'provider': 'antigravity',
             'quota_scope': 'family_max',
             'model_quotas': model_readings[family],
-            'label': f'{family} 5h',
+            'label': f'{family} quota',
             'percentage': info['percentage'],
             'next_reset_time_ms': reset_ms,
             'next_reset_iso': reset_iso_local,

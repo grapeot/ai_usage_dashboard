@@ -817,6 +817,87 @@ class TestExportAntigravityQuota:
         assert result == []
 
 
+class TestSharedQuotaSummary:
+    @staticmethod
+    def response():
+        return {'response': {'groups': [
+            {'displayName': 'Gemini Models', 'buckets': [
+                {'bucketId': 'gemini-weekly', 'window': 'weekly',
+                 'remainingFraction': 0.8123456, 'resetTime': '2026-08-10T12:00:00Z'},
+                {'bucketId': 'gemini-5h', 'window': '5h',
+                 'remainingFraction': 0.6234567, 'resetTime': '2026-08-04T15:00:00Z'},
+            ]},
+            {'displayName': 'Claude and GPT models', 'buckets': [
+                {'bucketId': '3p-weekly', 'window': 'weekly',
+                 'remainingFraction': 1, 'resetTime': '2026-08-10T13:00:00Z'},
+                {'bucketId': '3p-5h', 'window': '5h',
+                 'remainingFraction': 0, 'resetTime': '2026-08-04T16:00:00Z'},
+            ]},
+        ]}}
+
+    def test_summary_is_preferred_and_shared_third_party_pool_is_not_duplicated(self):
+        conn = AntigravityConnection(pid=1, port=9999, csrf_token='fake')
+        with patch('auto_usage._discover_antigravity_connections', return_value=[conn]), \
+             patch('auto_usage._antigravity_rpc', return_value=self.response()) as rpc:
+            result = export_antigravity_quota()
+        rpc.assert_called_once_with(conn, 'RetrieveUserQuotaSummary', {'forceRefresh': True})
+        by_label = {q['label']: q for q in result}
+        assert set(by_label) == {'Gemini 7d', 'Gemini 5h', 'Claude/GPT 7d', 'Claude/GPT 5h'}
+        assert by_label['Gemini 7d']['percentage'] == pytest.approx(18.76544)
+        assert by_label['Gemini 5h']['percentage'] == pytest.approx(37.65433)
+        assert by_label['Claude/GPT 7d']['percentage'] == 0
+        assert by_label['Claude/GPT 5h']['percentage'] == 100
+        assert by_label['Gemini 7d']['pool_id'] == 'antigravity:gemini-weekly'
+        assert all(q['quota_scope'] == 'shared_bucket' for q in result)
+        assert by_label['Gemini 7d']['next_reset_time_ms'] == 1786363200000
+
+    @pytest.mark.parametrize('change', [
+        {'disabled': True}, {'remainingFraction': None}, {'remainingFraction': True},
+        {'remainingFraction': float('nan')}, {'remainingFraction': float('inf')},
+        {'remainingFraction': -0.1}, {'remainingFraction': 1.1},
+        {'resetTime': 'not-a-time'}, {'resetTime': None},
+        {'resetTime': '2026-08-10T12:00:00'},
+        {'window': '5h'}, {'bucketId': 'unknown-weekly'},
+    ])
+    def test_invalid_bucket_is_not_fabricated_as_available_quota(self, change):
+        from antigravity_usage import parse_quota_summary
+        response = self.response()
+        response['response']['groups'][0]['buckets'][0].update(change)
+        result = parse_quota_summary(response)
+        assert len(result) == 3
+        assert not any(q['pool_id'] == 'antigravity:gemini-weekly' for q in result)
+
+    def test_unavailable_summary_falls_back_with_unresolved_window(self):
+        conn = AntigravityConnection(pid=1, port=9999, csrf_token='fake')
+        legacy = {'clientModelConfigs': [{
+            'label': 'Gemini Flash', 'modelOrAlias': {'model': 'gemini-flash'},
+            'quotaInfo': {'remainingFraction': 0.5, 'resetTime': '2026-08-10T12:00:00Z'},
+        }]}
+        with patch('auto_usage._discover_antigravity_connections', return_value=[conn]), \
+             patch('auto_usage._antigravity_rpc', side_effect=[None, legacy]) as rpc:
+            result = export_antigravity_quota()
+        assert rpc.call_args_list[1].args[1] == 'GetCascadeModelConfigData'
+        assert result[0]['label'] == 'Gemini quota'
+        assert result[0]['quota_scope'] == 'family_max'
+
+    def test_weekly_and_short_window_survive_api_and_history_without_rounding(self, tmp_path):
+        import antigravity_usage
+        import history_store
+        import quota_capture
+        from dashboard_models import QuotaSnapshot
+
+        snapshots = quota_capture.capture(antigravity_usage.parse_quota_summary(self.response()))
+        payload = [QuotaSnapshot.model_validate(q).model_dump() for q in snapshots]
+        database = str(tmp_path / 'quotas.db')
+        assert history_store.record_quota_snapshots(payload, path=database) == 4
+        with sqlite3.connect(database) as conn:
+            rows = conn.execute('SELECT pool_id, percentage, quota_scope FROM quota_samples').fetchall()
+        actual = {r[0]: r[1] for r in rows}
+        assert actual['antigravity:gemini-weekly'] == pytest.approx(18.76544)
+        assert actual['antigravity:gemini-5h'] == pytest.approx(37.65433)
+        assert all(r[2] == 'shared_bucket' for r in rows)
+
+
 class TestArgonTimestampBackfill:
     def test_decodes_leading_protobuf_timestamp(self):
         from antigravity_usage import timestamp_ms_from_step_metadata

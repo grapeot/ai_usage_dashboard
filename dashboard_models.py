@@ -83,7 +83,7 @@ class QuotaCaptureMetadata(BaseModel):
     percentage_resolution: Optional[float] = Field(default=None, description='Resolution of the upstream percentage reading, in percentage points, when known.')
     pool_id: Optional[str] = Field(default=None, description='Provider quota pool identifier; the window label identifies its duration.')
     account_fingerprint: Optional[str] = Field(default=None, description='Opaque fingerprint of a stable account identity when available. Never a credential.')
-    quota_scope: Optional[str] = Field(default=None, description='Scope of the reading; family_max is a display aggregate, not an independent billing pool.')
+    quota_scope: Optional[str] = Field(default=None, description='Scope of the reading: shared_bucket identifies an upstream billing bucket; family_max is a legacy display aggregate, not an independent billing pool.')
     model_quotas: Optional[list[ModelQuotaReading]] = Field(default=None, description='Unrounded per-model quota readings behind a display aggregate.')
     absolute_limit_usd: Optional[float] = Field(default=None, description='Known upstream dollar limit, only supplied when its currency and pool scope are established.')
 
