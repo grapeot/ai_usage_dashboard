@@ -913,6 +913,40 @@ def test_load_claude_code_detailed_normalizes_fast_opus_variant_with_dotted_mode
     }
 
 
+@pytest.mark.parametrize('model', ['claude-fable-5-2', 'claude-fable-5.2'])
+def test_claude_fable_52_speed_reaches_fast_cost_from_raw_usage(tmp_path, model):
+    projects_dir = tmp_path / 'projects'
+    projects_dir.mkdir()
+    records = []
+    for speed in ('standard', 'fast'):
+        records.append({
+            'type': 'assistant',
+            'timestamp': '2026-11-10T12:00:00Z',
+            'message': {
+                'id': f'msg-{speed}',
+                'model': model,
+                'usage': {
+                    'input_tokens': 100_000,
+                    'cache_read_input_tokens': 50_000,
+                    'cache_creation_input_tokens': 30_000,
+                    'cache_creation': {
+                        'ephemeral_5m_input_tokens': 20_000,
+                        'ephemeral_1h_input_tokens': 10_000,
+                    },
+                    'output_tokens': 10_000,
+                    'speed': speed,
+                },
+            },
+        })
+    (projects_dir / 'session.jsonl').write_text('\n'.join(json.dumps(r) for r in records))
+    detailed = load_claude_code_detailed(project_dirs=[projects_dir])
+    models = detailed[date(2026, 11, 10)]
+    assert models['claude-fable-5-2-fast'] == models[model]
+    # Standard: .1*8 + .05*.2 + .02*10 + .01*16 + .01*40 = $1.57.
+    # Fast doubles every category; both requests together cost $4.71.
+    assert calc_claude_code_cost(detailed)[date(2026, 11, 10)] == pytest.approx(4.71)
+
+
 # --- GLM / Z.ai quota ---
 
 _GLM_QUOTA_SAMPLE = {

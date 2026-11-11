@@ -2,6 +2,8 @@
 import sys
 from pathlib import Path
 
+import pytest
+
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from pricing_config import get_pricing, calc_cost, calc_cost_from_parts
@@ -144,8 +146,8 @@ class TestGetPricing:
         assert get_pricing("claude-sonnet-5-thinking") == get_pricing("claude-sonnet-5")
 
     def test_claude_sonnet_5_5(self):
-        # Sonnet 5.5 (2026-09-28): same list rates as Sonnet 5.
-        assert get_pricing("claude-sonnet-5-5") == {"input": 2.0, "cache_read": 0.2, "cache_write": 2.5, "cache_write_1h": 4.0, "output": 10.0}
+        # Sonnet 5.5: cache reads are 5% of input, unlike Sonnet 5's 10%.
+        assert get_pricing("claude-sonnet-5-5") == {"input": 2.0, "cache_read": 0.1, "cache_write": 2.5, "cache_write_1h": 4.0, "output": 10.0}
         assert get_pricing("claude-sonnet-5.5") == get_pricing("claude-sonnet-5-5")
         assert get_pricing("claude-sonnet-5-5-thinking") == get_pricing("claude-sonnet-5-5")
 
@@ -217,6 +219,25 @@ class TestGetPricing:
     def test_unknown_returns_none(self):
         assert get_pricing("unknown-model-xyz") is None
         assert get_pricing("") is None
+
+    @pytest.mark.parametrize("model, expected", [
+        ("gpt-6.1-terra", {"input": 1.0, "cached": 0.05, "cache_write": 1.25, "output": 5.0}),
+        ("gpt-6.1-terra-fast", {"input": 2.0, "cached": 0.1, "cache_write": 2.5, "output": 10.0}),
+        ("gemini-4-carbon", {"input": 2.0, "cached": 0.1, "output": 10.0}),
+        ("antigravity-gemini-4-carbon-high", {"input": 2.0, "cached": 0.1, "output": 10.0}),
+        ("claude-fable-5-2", {"input": 8.0, "cache_read": 0.2, "cache_write": 10.0, "cache_write_1h": 16.0, "output": 40.0}),
+        ("claude-fable-5.2-thinking", {"input": 8.0, "cache_read": 0.2, "cache_write": 10.0, "cache_write_1h": 16.0, "output": 40.0}),
+        ("claude-fable-5-2-fast", {"input": 16.0, "cache_read": 0.4, "cache_write": 20.0, "cache_write_1h": 32.0, "output": 80.0}),
+        ("claude-fable-5.2-fast", {"input": 16.0, "cache_read": 0.4, "cache_write": 20.0, "cache_write_1h": 32.0, "output": 80.0}),
+        ("claude-haiku-5-5", {"input": 0.1, "cache_read": 0.01, "cache_write": 0.125, "cache_write_1h": 0.2, "output": 0.5}),
+        ("claude-haiku-5.5", {"input": 0.1, "cache_read": 0.01, "cache_write": 0.125, "cache_write_1h": 0.2, "output": 0.5}),
+    ])
+    def test_november_models_do_not_fall_through_to_legacy_prices(self, model, expected):
+        assert get_pricing(model) == expected
+
+    def test_internal_auto_review_remains_unpriced(self):
+        # This is not a public model id; do not invent a rate or alias.
+        assert get_pricing("codex-auto-review") is None
 
 
 class TestCalcCost:
@@ -294,3 +315,24 @@ class TestCalcCostFromParts:
 
     def test_none_pricing_returns_zero(self):
         assert calc_cost_from_parts(None, input_non_cached=1_000_000) == 0.0
+
+    @pytest.mark.parametrize("model, expected", [
+        # Daily totals across short-context requests:
+        # 100K non-cached + 1M cached + 10K output. Anthropic adds
+        # 20K 5-minute cache writes and 10K 1-hour writes.
+        ("gpt-6.1-terra", 0.2),
+        ("gemini-4-carbon", 0.4),
+        ("claude-fable-5-2", 1.76),
+        ("claude-haiku-5-5", 0.0295),
+        ("claude-sonnet-5-5", 0.49),
+    ])
+    def test_november_rates_cost_each_token_category(self, model, expected):
+        cost = calc_cost_from_parts(
+            get_pricing(model),
+            input_non_cached=100_000,
+            input_cached=1_000_000,
+            output=10_000,
+            cache_write=20_000 if model.startswith("claude-") else 0,
+            cache_write_1h=10_000 if model.startswith("claude-") else 0,
+        )
+        assert cost == pytest.approx(expected)
