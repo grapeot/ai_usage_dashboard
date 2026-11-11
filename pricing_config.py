@@ -1,12 +1,13 @@
 """
 Model pricing config: lookup official API prices by model name, independent of source.
 Reference: docs/rfc.md
-Updated: 2026-10 (2026-10-08: GPT-6.1 Sol ultrafast added; 2026-10-04:
+Updated: 2026-11-11 (Terra, Carbon, Fable 5.2, Haiku 5.5 and Sonnet cache rates);
+ 2026-10-08: GPT-6.1 Sol ultrafast added; 2026-10-04:
  GPT-6 Sol/Luna, GPT-6.1 Sol, GPT-6 Astra ultrafast, Claude Opus 5.5, Sonnet
  5.5 added; 2026-09 full pricing audit
  2026-09-15, evidence in workspace tmp/pricing_audit_20260915/;
  2026-09-24: OpenRouter Qwen3.8 27B rates, ollama-cloud / llamacpp / mtplx and
- zai/glm-5.3-flash gaps closed from a 30-day usage audit)
+  zai/glm-5.3-flash gaps closed from a 30-day usage audit
 """
 import re
 # model name -> official price ($/M tokens)
@@ -24,6 +25,9 @@ MODEL_PRICING = {
     "gpt-6-luna": {"input": 0.1, "cached": 0.01, "cache_write": 0.125, "output": 0.5},
     # GPT-6.1 Sol (2026-09-29): $2/$10 like Sol, cached input halved to $0.10.
     "gpt-6.1-sol": {"input": 2.0, "cached": 0.1, "cache_write": 2.5, "output": 10.0},
+    # Standard rates, 30-minute cache writes (verified 2026-11-11):
+    # https://developers.openai.com/api/docs/models/gpt-6.1-terra
+    "gpt-6.1-terra": {"input": 1.0, "cached": 0.05, "cache_write": 1.25, "output": 5.0},
     # GPT-6.1 Sol Ultrafast (2026-10-08 rollout; official Ultrafast pricing
     # table: $12/M input, $0.60 cached, $15 cache writes, $60/M output,
     # short context). Community announcement frames $12/$60 as "just 1.2x
@@ -79,8 +83,10 @@ MODEL_PRICING = {
     "claude-sonnet-4.6": {"input": 3.0, "cache_read": 0.3, "cache_write": 3.75, "cache_write_1h": 6.0, "output": 15.0},
     # Anthropic Sonnet 5: $2/$10 launch price is now the long-term standard price.
     "claude-sonnet-5": {"input": 2.0, "cache_read": 0.2, "cache_write": 2.5, "cache_write_1h": 4.0, "output": 10.0},
-    # Sonnet 5.5 (2026-09-28): same list rates as Sonnet 5 ($2/$10), cache read $0.20.
-    "claude-sonnet-5-5": {"input": 2.0, "cache_read": 0.2, "cache_write": 2.5, "cache_write_1h": 4.0, "output": 10.0},
+    # Current Anthropic rates (verified 2026-11-11): Sonnet 5.5 cache hits
+    # cost 5% of input, not Sonnet 5's 10%.
+    # https://platform.claude.com/docs/en/about-claude/pricing
+    "claude-sonnet-5-5": {"input": 2.0, "cache_read": 0.1, "cache_write": 2.5, "cache_write_1h": 4.0, "output": 10.0},
     "claude-opus-4.6": {"input": 5.0, "cache_read": 0.5, "cache_write": 6.25, "cache_write_1h": 10.0, "output": 25.0},
     # Fast mode is a request parameter (speed:"fast"), not a model id; Opus 5/4.8
     # fast rate is 2x standard: $10/$50 (docs.claude.com fast-mode page).
@@ -95,7 +101,16 @@ MODEL_PRICING = {
     "claude-fable-5": {"input": 10.0, "cache_read": 1.0, "cache_write": 12.5, "cache_write_1h": 20.0, "output": 50.0},
     # Fable 5.1 cache hit drops to 0.025x base input ($0.25).
     "claude-fable-5-1": {"input": 10.0, "cache_read": 0.25, "cache_write": 12.5, "cache_write_1h": 20.0, "output": 50.0},
+    # Fable 5.2: $8/$40 and 2.5% cache reads. Match before legacy Fable.
+    # https://platform.claude.com/docs/en/about-claude/pricing
+    "claude-fable-5-2": {"input": 8.0, "cache_read": 0.2, "cache_write": 10.0, "cache_write_1h": 16.0, "output": 40.0},
+    "claude-fable-5-2-fast": {"input": 16.0, "cache_read": 0.4, "cache_write": 20.0, "cache_write_1h": 32.0, "output": 80.0},
     "claude-haiku-4.5": {"input": 1.0, "cache_read": 0.1, "cache_write": 1.25, "cache_write_1h": 2.0, "output": 5.0},
+    # Haiku 5.5 short-context reference rates (prompts <=100K tokens).
+    # As with the other static reference prices, long-context premiums are
+    # not inferred from per-day aggregates.
+    # https://platform.claude.com/docs/en/about-claude/pricing
+    "claude-haiku-5-5": {"input": 0.1, "cache_read": 0.01, "cache_write": 0.125, "cache_write_1h": 0.2, "output": 0.5},
     "gemini-3-flash": {"input": 0.5, "output": 3.0},
     "gemini-3-flash-preview": {"input": 0.5, "output": 3.0},
     "antigravity-gemini-3-flash": {"input": 0.5, "output": 3.0},
@@ -109,6 +124,9 @@ MODEL_PRICING = {
     # (ai.google.dev/gemini-api/docs/pricing): $2 / $0.10 cached / $10.
     # From 2026-12-01 the published rates are $4 / $0.20 / $20.
     "gemini-4-argon": {"input": 2.0, "cached": 0.10, "output": 10.0},
+    # Carbon shares Argon's Standard intro rates through 2026-11-30.
+    # https://ai.google.dev/gemini-api/docs/pricing#gemini-4-carbon
+    "gemini-4-carbon": {"input": 2.0, "cached": 0.10, "output": 10.0},
     "gemini-3-pro": {"input": 2.0, "output": 12.0},
     "gemini-3.1-pro-preview": {"input": 2.0, "output": 12.0},
     # DeepSeek peak/off-peak dual-track pricing (effective 2026-08-16): cost
@@ -250,6 +268,9 @@ def get_pricing(model_id: str) -> Pricing | None:
             return MODEL_PRICING["claude-opus-5-5"].copy()
         return MODEL_PRICING["claude-opus-5"].copy()
     if "fable" in model_lower and "claude" in model_lower:
+        if "5-2" in model_lower or "5.2" in model_lower:
+            key = "claude-fable-5-2-fast" if "fast" in model_lower else "claude-fable-5-2"
+            return MODEL_PRICING[key].copy()
         if "5-1" in model_lower or "5.1" in model_lower:
             return MODEL_PRICING["claude-fable-5-1"].copy()
         return MODEL_PRICING["claude-fable-5"].copy()
@@ -260,6 +281,8 @@ def get_pricing(model_id: str) -> Pricing | None:
             return MODEL_PRICING["claude-sonnet-5"].copy()
         return MODEL_PRICING["claude-sonnet-4.6"].copy()
     if "haiku" in model_lower and "claude" in model_lower:
+        if "5-5" in model_lower or "5.5" in model_lower:
+            return MODEL_PRICING["claude-haiku-5-5"].copy()
         return MODEL_PRICING["claude-haiku-4.5"].copy()
     if model_lower.startswith("grok-4.20"):
         return MODEL_PRICING["grok-4.3"].copy()
@@ -291,6 +314,8 @@ def get_pricing(model_id: str) -> Pricing | None:
         return MODEL_PRICING["glm-5.2"].copy()
     if "gemini-4-argon" in model_lower:
         return MODEL_PRICING["gemini-4-argon"].copy()
+    if "gemini-4-carbon" in model_lower:
+        return MODEL_PRICING["gemini-4-carbon"].copy()
     if "gemini-3.8-flash" in model_lower:
         return MODEL_PRICING["gemini-3.8-flash"].copy()
     if "gemini-3.7-flash" in model_lower:
