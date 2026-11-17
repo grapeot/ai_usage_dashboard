@@ -197,6 +197,22 @@ class TestGetPricing:
         assert get_pricing("mtplx/flash-next-mplx-pack") == free
         # Local NVFP4 quantized builds (SGLang/RadixArk) bill $0.
         assert get_pricing("qwen38/RadixArk/Qwen3.8-27B-NVFP4") == free
+        assert get_pricing("qwen3.8-27b", "qwen38") == free
+        assert get_pricing("qwen38/qwen3.8-27b") == free
+        assert get_pricing("lmstudio/gpt-6.1-sol") == free
+        assert get_pricing("qwen3.8-27b")["input"] == 0.5
+
+    @pytest.mark.parametrize("model", [
+        "gemini-4-hydrogen", "gemini-4-hydrogen-high",
+        "antigravity-gemini-4-hydrogen-xhigh",
+    ])
+    def test_hydrogen_standard_pricing(self, model):
+        pricing = get_pricing(model)
+        assert pricing == {"input": 1.5, "cached": 0.075, "output": 7.5}
+        assert calc_cost_from_parts(
+            pricing, input_non_cached=1_000_000,
+            input_cached=1_000_000, output=1_000_000,
+        ) == pytest.approx(9.075)
 
     def test_ollama_cloud_prefix(self):
         # Ollama Cloud serves third-party models at their official rates.
