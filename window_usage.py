@@ -333,7 +333,7 @@ def aggregate(
             pricing = (
                 _ag.resolve_pricing(record.model, pricing_lookup=get_pricing)
                 if record.source == 'antigravity'
-                else get_pricing(record.model)
+                else get_pricing(record.model, record.billing_provider or '')
             )
             if pricing:
                 entry.cost_usd += calc_cost_from_parts(

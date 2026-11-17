@@ -1,7 +1,8 @@
 """
 Model pricing config: lookup official API prices by model name, independent of source.
 Reference: docs/rfc.md
-Updated: 2026-11-11 (Terra, Carbon, Fable 5.2, Haiku 5.5 and Sonnet cache rates);
+Updated: 2026-11-16 (Hydrogen and local-provider pricing identity);
+ 2026-11-11 (Terra, Carbon, Fable 5.2, Haiku 5.5 and Sonnet cache rates);
  2026-10-08: GPT-6.1 Sol ultrafast added; 2026-10-04:
  GPT-6 Sol/Luna, GPT-6.1 Sol, GPT-6 Astra ultrafast, Claude Opus 5.5, Sonnet
  5.5 added; 2026-09 full pricing audit
@@ -127,6 +128,9 @@ MODEL_PRICING = {
     # Carbon shares Argon's Standard intro rates through 2026-11-30.
     # https://ai.google.dev/gemini-api/docs/pricing#gemini-4-carbon
     "gemini-4-carbon": {"input": 2.0, "cached": 0.10, "output": 10.0},
+    # Standard rates, including implicit cache hits (verified 2026-11-16).
+    # https://ai.google.dev/gemini-api/docs/pricing#gemini-4-hydrogen
+    "gemini-4-hydrogen": {"input": 1.5, "cached": 0.075, "output": 7.5},
     "gemini-3-pro": {"input": 2.0, "output": 12.0},
     "gemini-3.1-pro-preview": {"input": 2.0, "output": 12.0},
     # DeepSeek peak/off-peak dual-track pricing (effective 2026-08-16): cost
@@ -209,11 +213,25 @@ MODEL_ALIASES = {
 Pricing = dict[str, float]
 
 
-def get_pricing(model_id: str) -> Pricing | None:
+LOCAL_PROVIDERS = frozenset({"lmstudio", "llamacpp", "mtplx", "qwen38"})
+
+
+def pricing_model_id(provider_id: str, model_id: str) -> str:
+    """Keep local routing identity when reducing usage to per-model totals."""
+    provider = (provider_id or "").lower().strip()
+    if provider in LOCAL_PROVIDERS and not model_id.lower().startswith(provider + "/"):
+        return f"{provider}/{model_id}"
+    return model_id
+
+
+def get_pricing(model_id: str, provider_id: str = "") -> Pricing | None:
     """Look up pricing by model_id with alias support. Returns {input, cached?, output} or None."""
-    model_lower = (model_id or "").lower().strip()
+    model_lower = pricing_model_id(provider_id, model_id or "").lower().strip()
     if not model_lower:
         return None
+    # Routing identity takes precedence over a recognized hosted model name.
+    if model_lower.partition("/")[0] in LOCAL_PROVIDERS:
+        return MODEL_PRICING["local-free"].copy()
     # Strip common provider prefixes from OpenRouter / OpenCode-style ids.
     # ollama-cloud serves third-party models (Z.ai, DeepSeek, ...) at their
     # official rates, so the bare model id prices correctly. Loop so ids like
@@ -316,6 +334,8 @@ def get_pricing(model_id: str) -> Pricing | None:
         return MODEL_PRICING["gemini-4-argon"].copy()
     if "gemini-4-carbon" in model_lower:
         return MODEL_PRICING["gemini-4-carbon"].copy()
+    if "gemini-4-hydrogen" in model_lower:
+        return MODEL_PRICING["gemini-4-hydrogen"].copy()
     if "gemini-3.8-flash" in model_lower:
         return MODEL_PRICING["gemini-3.8-flash"].copy()
     if "gemini-3.7-flash" in model_lower:

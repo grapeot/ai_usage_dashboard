@@ -29,7 +29,7 @@ import dsh_usage as _dsh_usage
 import grok_usage as _grok_usage
 import history_store
 import quota_capture
-from pricing_config import get_pricing, calc_cost_from_parts
+from pricing_config import get_pricing, calc_cost_from_parts, pricing_model_id
 
 plt.rcParams['axes.unicode_minus'] = False
 
@@ -1466,9 +1466,10 @@ def load_opencode_detailed(start_ts: int | None = None, end_ts: int | None = Non
 
     if ocs_query is not None:
         for m in ocs_query.iter_assistant_messages(since_ms=start_ts, until_ms=end_ts, archive_dbs=_opencode_extra_dbs()):
-            model_id = m.model or 'unknown'
-            if classify_opencode_bucket(m.provider or '', model_id) is None:
+            raw_model_id = m.model or 'unknown'
+            if classify_opencode_bucket(m.provider or '', raw_model_id) is None:
                 continue
+            model_id = pricing_model_id(m.provider or '', raw_model_id)
             total = m.tokens_input + m.tokens_output + m.tokens_reasoning + m.tokens_cache_read + m.tokens_cache_write
             if total <= 0:
                 continue
@@ -1501,6 +1502,7 @@ def load_opencode_detailed(start_ts: int | None = None, end_ts: int | None = Non
                 model_id = msg.get('modelID', '') or 'unknown'
                 if classify_opencode_bucket(provider_id, model_id) is None:
                     continue
+                model_id = pricing_model_id(provider_id, model_id)
                 tokens = msg.get('tokens', {})
                 inp = tokens.get('input', 0)
                 out = tokens.get('output', 0) + tokens.get('reasoning', 0)

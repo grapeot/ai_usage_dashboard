@@ -73,6 +73,20 @@ def test_cursor_is_excluded_from_cost_basis():
     assert 'deepseek' not in window_usage._UNPRICED_PROVIDERS
 
 
+def test_local_provider_is_not_priced_as_hosted_model(monkeypatch):
+    records = [window_usage.UsageRecord(
+        time=datetime(2026, 10, 5, 1), provider='qwen',
+        model='qwen3.8-27b', billing_provider='qwen38',
+        input_non_cached=1_000_000, input_cached=2_000_000, output=100_000,
+    )]
+    monkeypatch.setitem(window_usage.SOURCES, 'fake', lambda s, e: iter(records))
+    total = window_usage.aggregate(
+        datetime(2026, 10, 5), datetime(2026, 10, 6), sources=['fake'],
+    )['qwen']
+    assert total.total == 3_100_000
+    assert total.cost_usd == 0
+
+
 def test_aggregate_sums_records_and_prices(monkeypatch):
     # Inject a synthetic source so the aggregation + cost path is exercised
     # deterministically (no real local data).

@@ -766,13 +766,17 @@ def test_load_opencode_honors_env_opencode_skill_path(monkeypatch, tmp_path):
     assert daily['gpt_opencode'] == {date(2026, 3, 20): 15}
 
 
-def test_load_opencode_detailed_uses_skill_and_counts_reasoning_as_output(monkeypatch):
+@pytest.mark.parametrize('provider, model, pricing_key', [
+    ('openai', 'gpt-5.4', 'gpt-5.4'),
+    ('qwen38', 'qwen3.8-27b', 'qwen38/qwen3.8-27b'),
+])
+def test_load_opencode_detailed_uses_skill_and_counts_reasoning_as_output(monkeypatch, provider, model, pricing_key):
     ts = date_to_epoch_ms(date(2026, 3, 20)) + 12 * 60 * 60 * 1000
 
     def fake_iter(since_ms=None, until_ms=None, **kw):
         yield SimpleNamespace(
             id='m1', session_id='ses', time_created=ts,
-            provider='openai', model='gpt-5.4',
+            provider=provider, model=model,
             tokens_input=1, tokens_output=2, tokens_reasoning=3,
             tokens_cache_read=4, tokens_cache_write=5, source_db='opencode_archive.db',
         )
@@ -789,7 +793,7 @@ def test_load_opencode_detailed_uses_skill_and_counts_reasoning_as_output(monkey
 
     assert detailed == {
         date(2026, 3, 20): {
-            'gpt-5.4': {'input': 1, 'output': 5, 'cache_read': 4, 'cache_write': 5},
+            pricing_key: {'input': 1, 'output': 5, 'cache_read': 4, 'cache_write': 5},
         },
     }
 
