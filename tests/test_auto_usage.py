@@ -835,6 +835,8 @@ def test_load_opencode_falls_back_to_local_db_when_skill_missing(monkeypatch, tm
 
 def test_load_opencode_from_db_returns_empty_when_db_missing(monkeypatch, tmp_path):
     monkeypatch.setattr('auto_usage.OPENCODE_DB', tmp_path / 'missing.db')
+    monkeypatch.setattr('auto_usage._opencode_extra_dbs', lambda: [])
+    monkeypatch.delenv('OPENCODE_MAIN_DB', raising=False)
     assert load_opencode_from_db() == {
         'anthropic': {},
         'gpt_opencode': {},
@@ -842,9 +844,44 @@ def test_load_opencode_from_db_returns_empty_when_db_missing(monkeypatch, tmp_pa
         'glm_opencode': {},
         'deepseek': {},
         'grok': {},
+        'qwen': {},
         'kimi': {},
         'opencode_other': {},
     }
+
+
+def test_opencode_batch_dotenv_usage_dedup_and_active_time(monkeypatch, tmp_path):
+    import auto_usage as a
+    from window_usage import iter_opencode_records
+
+    start = datetime(2026, 3, 20, 10)
+    ts = int(start.timestamp() * 1000)
+    main = tmp_path / 'main.db'
+    batch = tmp_path / 'batch.db'
+    msg = json.dumps({'role': 'assistant', 'providerID': 'openai', 'modelID': 'gpt-5.4',
+                      'tokens': {'input': 2, 'output': 3, 'reasoning': 4, 'cache': {'read': 5}}})
+    copy = ('same', 'main', ts + 60_000, msg)
+    for path, rows in [(main, [('u1', 'main', ts, '{"role":"user"}'), copy]),
+                       (batch, [copy, ('u2', 'batch', ts + 30_000, '{"role":"user"}'),
+                                ('batch-only', 'batch', ts + 120_000, msg)])]:
+        with sqlite3.connect(path) as conn:
+            conn.execute('CREATE TABLE message (id TEXT PRIMARY KEY, session_id TEXT, time_created INTEGER, data TEXT)')
+            conn.executemany('INSERT INTO message VALUES (?, ?, ?, ?)', rows)
+    monkeypatch.setattr(a, 'SCRIPT_DIR', str(tmp_path))
+    monkeypatch.setattr(a, 'OPENCODE_DB', main)
+    monkeypatch.delenv('OPENCODE_MAIN_DB', raising=False)
+    monkeypatch.delenv('OPENCODE_BATCH_DB', raising=False)
+    (tmp_path / '.env').write_text(f'OPENCODE_BATCH_DB={batch}\n')
+    monkeypatch.setitem(sys.modules, 'opencode_skill.query', None)
+    bounds = ts, ts + 180_000
+    assert a.load_opencode(*bounds)['gpt_opencode'] == {start.date(): 28}
+    assert a.load_opencode_detailed(*bounds)[start.date()]['gpt-5.4'] == {
+        'input': 4, 'output': 14, 'cache_read': 10, 'cache_write': 0,
+    }
+    assert {r.record_id for r in iter_opencode_records(start, datetime(2026, 3, 20, 10, 3))} == {'same', 'batch-only'}
+    intervals = a.load_opencode_turn_intervals(*bounds)
+    # AI Hours measures summed session activity, including parallel sessions.
+    assert a.compute_daily_ai_active_seconds(intervals, [], '2026-03-20', '2026-03-20')[start.date()] == 150
 
 
 def test_load_opencode_turn_intervals_filters_by_time_range(monkeypatch, tmp_path):
