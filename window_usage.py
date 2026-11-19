@@ -87,75 +87,24 @@ def _bucket(provider_id: str, model_id: str) -> str:
 
 def iter_opencode_records(start: datetime, end: datetime) -> Iterator[UsageRecord]:
     """OpenCode assistant messages with per-message timestamps."""
-    _auto.configure_opencode_skill_path()
-    import importlib
-    try:
-        ocs_query = importlib.import_module('opencode_skill.query')
-    except ImportError:
-        ocs_query = None
     start_ms = int(start.timestamp() * 1000)
     end_ms = int(end.timestamp() * 1000)
-    if ocs_query is not None:
-        for m in ocs_query.iter_assistant_messages(since_ms=start_ms, until_ms=end_ms, archive_dbs=_auto._opencode_extra_dbs()):
-            t = datetime.fromtimestamp(m.time_created / 1000)
-            if not _in_window(t, start, end):
-                continue
-            yield UsageRecord(
-                time=t,
-                provider=_bucket(m.provider or '', m.model or ''),
-                model=m.model or 'unknown',
-                input_non_cached=m.tokens_input,
-                input_cached=m.tokens_cache_read,
-                output=m.tokens_output + m.tokens_reasoning,
-                cache_write=m.tokens_cache_write,
-                source='opencode',
-                billing_provider=m.provider,
-                record_id=m.id,
-            )
-        return
-    yield from _iter_opencode_db_records(start, end, start_ms, end_ms)
-
-
-def _iter_opencode_db_records(start: datetime, end: datetime, start_ms: int, end_ms: int) -> Iterator[UsageRecord]:
-    import json
-    import sqlite3
-    if not _auto.OPENCODE_DB.exists():
-        return
-    try:
-        conn = sqlite3.connect(f'file:{_auto.OPENCODE_DB}?mode=ro', uri=True)
-        cur = conn.cursor()
-        cur.execute(
-            'SELECT id, time_created, data FROM message '
-            "WHERE json_extract(data, '$.role') = 'assistant' AND time_created >= ? AND time_created < ?",
-            (start_ms, end_ms),
+    for m in _auto.iter_opencode_messages(start_ms, end_ms):
+        t = datetime.fromtimestamp(m.time_created / 1000)
+        if not _in_window(t, start, end):
+            continue
+        yield UsageRecord(
+            time=t,
+            provider=_bucket(m.provider or '', m.model or ''),
+            model=m.model or 'unknown',
+            input_non_cached=m.tokens_input,
+            input_cached=m.tokens_cache_read,
+            output=m.tokens_output + m.tokens_reasoning,
+            cache_write=m.tokens_cache_write,
+            source='opencode',
+            billing_provider=m.provider,
+            record_id=m.id,
         )
-        for message_id, time_created, data_str in cur:
-            try:
-                msg = json.loads(data_str)
-            except json.JSONDecodeError:
-                continue
-            tokens = msg.get('tokens', {})
-            cache = tokens.get('cache', {}) if isinstance(tokens.get('cache'), dict) else {}
-            t = datetime.fromtimestamp(time_created / 1000)
-            if not _in_window(t, start, end):
-                continue
-            provider_id = msg.get('providerID', '')
-            model_id = msg.get('modelID', 'unknown')
-            yield UsageRecord(
-                time=t,
-                provider=_bucket(provider_id, model_id),
-                model=model_id,
-                input_non_cached=int(tokens.get('input', 0) or 0),
-                input_cached=int(cache.get('read', 0) or 0),
-                output=int(tokens.get('output', 0) or 0) + int(tokens.get('reasoning', 0) or 0),
-                cache_write=int(cache.get('write', 0) or 0),
-                source='opencode',
-                billing_provider=provider_id,
-                record_id=message_id,
-            )
-        conn.close()
-    except sqlite3.Error:
-        return
 
 
 def iter_dsh_records(start: datetime, end: datetime) -> Iterator[UsageRecord]:

@@ -13,6 +13,8 @@ import sys
 import argparse
 import sqlite3
 from datetime import date, datetime, timedelta
+from contextlib import closing
+from types import SimpleNamespace
 from zoneinfo import ZoneInfo
 from collections import defaultdict
 from collections.abc import Mapping
@@ -41,7 +43,6 @@ FONT_EN = FontProperties(family=['Helvetica Neue', 'Helvetica', 'Arial', 'DejaVu
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 OPENCODE_STORAGE = Path.home() / '.local' / 'share' / 'opencode' / 'storage' / 'message'
 OPENCODE_DB = Path.home() / '.local' / 'share' / 'opencode' / 'opencode.db'
-OPENCODE_BATCH_DB = Path(os.environ['OPENCODE_BATCH_DB']) if os.environ.get('OPENCODE_BATCH_DB') else None
 CLAUDE_PROJECT_DIRS = [
     Path.home() / '.claude' / 'projects',
     Path.home() / '.config' / 'claude' / 'projects',
@@ -238,7 +239,7 @@ def classify_dsh_bucket(model_id: str) -> str:
     provider, _, model = model_id.partition('/')
     return classify_model_bucket(provider, model, include_glm=False)
 
-def load_env():
+def _env_file_values():
     env_path = os.path.join(SCRIPT_DIR, '.env')
     if os.path.exists(env_path):
         with open(env_path) as f:
@@ -246,8 +247,12 @@ def load_env():
                 line = line.strip()
                 if line and not line.startswith('#') and '=' in line:
                     key, value = line.split('=', 1)
-                    if key not in os.environ:
-                        os.environ[key] = value
+                    yield key, value
+
+
+def load_env():
+    for key, value in _env_file_values():
+        os.environ.setdefault(key, value)
 
 
 def configure_opencode_skill_path():
@@ -269,17 +274,86 @@ def _opencode_extra_dbs():
     non-configured or missing DBs are silently skipped.
     """
     dbs: list[Path] = []
-    if OPENCODE_BATCH_DB is not None and OPENCODE_BATCH_DB.exists():
-        dbs.append(OPENCODE_BATCH_DB)
+    value = os.environ.get('OPENCODE_BATCH_DB')
+    if value is None:
+        value = dict(_env_file_values()).get('OPENCODE_BATCH_DB', '')
+    if value := value.strip():
+        dbs.append(Path(value).expanduser())
     try:
         configure_opencode_skill_path()
         ocs_query = importlib.import_module('opencode_skill.query')
-        for p in getattr(ocs_query, 'DEFAULT_ARCHIVE_DBS', ()):
-            if p.exists() and p not in dbs:
-                dbs.append(p)
+        dbs.extend(getattr(ocs_query, 'DEFAULT_ARCHIVE_DBS', ()))
     except ImportError:
         pass
-    return dbs
+    main = Path(os.environ.get('OPENCODE_MAIN_DB') or OPENCODE_DB).expanduser().resolve()
+    return [p for p in dict.fromkeys(p.resolve() for p in dbs if p.is_file()) if p != main]
+
+
+def _opencode_sources():
+    extra = _opencode_extra_dbs()
+    main = Path(os.environ.get('OPENCODE_MAIN_DB') or OPENCODE_DB).expanduser().resolve()
+    return main, extra
+
+
+def _iter_opencode_sql(paths, start_ts, end_ts, *, assistant_only=False):
+    seen = set()
+    for path in paths:
+        if not path.is_file():
+            continue
+        try:
+            with closing(sqlite3.connect(path.as_uri() + '?mode=ro', uri=True)) as conn:
+                columns = {row[1] for row in conn.execute('PRAGMA table_info(message)')}
+                # Older local fixtures/exports may only have a SQLite rowid.
+                key = 'id' if 'id' in columns else 'rowid'
+                query = f'SELECT {key}, session_id, time_created, data FROM message WHERE 1=1'
+                params = []
+                if start_ts is not None:
+                    query += ' AND time_created >= ?'
+                    params.append(start_ts)
+                if end_ts is not None:
+                    query += ' AND time_created < ?'
+                    params.append(end_ts)
+                for mid, sid, ts, raw in conn.execute(query, params):
+                    try:
+                        msg = json.loads(raw)
+                    except (TypeError, ValueError):
+                        continue
+                    if not isinstance(msg, dict) or (assistant_only and msg.get('role') != 'assistant'):
+                        continue
+                    mid = mid if key == 'id' else f'{path}:{mid}'
+                    if mid not in seen:
+                        seen.add(mid)
+                        yield mid, sid, ts, msg
+        except sqlite3.Error as exc:
+            print(f'Cannot read OpenCode usage source {path.name}: {exc}', file=sys.stderr)
+
+
+def iter_opencode_messages(start_ts=None, end_ts=None, *, use_skill=True):
+    main, extra = _opencode_sources()
+    if use_skill:
+        try:
+            query = importlib.import_module('opencode_skill.query')
+        except ImportError:
+            pass
+        else:
+            seen = set()
+            for m in query.iter_assistant_messages(since_ms=start_ts, until_ms=end_ts,
+                                                   main_db=main, archive_dbs=extra):
+                if m.id not in seen:
+                    seen.add(m.id)
+                    yield m
+            return
+
+    for mid, sid, ts, msg in _iter_opencode_sql([main, *extra], start_ts, end_ts, assistant_only=True):
+        tokens = msg.get('tokens')
+        tokens = tokens if isinstance(tokens, dict) else {}
+        cache = tokens.get('cache')
+        cache = cache if isinstance(cache, dict) else {}
+        yield SimpleNamespace(id=mid, session_id=sid, time_created=ts,
+                              provider=msg.get('providerID'), model=msg.get('modelID'),
+                              tokens_input=tokens.get('input') or 0, tokens_output=tokens.get('output') or 0,
+                              tokens_reasoning=tokens.get('reasoning') or 0,
+                              tokens_cache_read=cache.get('read') or 0, tokens_cache_write=cache.get('write') or 0)
 
 def get_date_range(days=30):
     today = datetime.now()
@@ -1353,20 +1427,11 @@ def load_claude_code_detailed(project_dirs: list[Path] | None = None, start_date
         daily_models[dt][model_id]['cache_write_1h'] += cache_write_1h
     return dict(daily_models)
 
-def empty_opencode_totals() -> dict[str, DailyTokens]:
-    return {
-        'anthropic': {},
-        'gpt_opencode': {},
-        'gemini': {},
-        'glm_opencode': {},
-        'deepseek': {},
-        'grok': {},
-        'kimi': {},
-        'opencode_other': {},
-    }
-
-
 def load_opencode_from_db(start_ts: int | None = None, end_ts: int | None = None) -> dict[str, DailyTokens]:
+    return _aggregate_opencode(iter_opencode_messages(start_ts, end_ts, use_skill=False))
+
+
+def _aggregate_opencode(messages):
     totals = {
         'anthropic': defaultdict(int),
         'gpt_opencode': defaultdict(int),
@@ -1378,69 +1443,7 @@ def load_opencode_from_db(start_ts: int | None = None, end_ts: int | None = None
         'kimi': defaultdict(int),
         'opencode_other': defaultdict(int),
     }
-    if not OPENCODE_DB.exists():
-        return empty_opencode_totals()
-
-    try:
-        conn = sqlite3.connect(f'file:{OPENCODE_DB}?mode=ro', uri=True)
-        cur = conn.cursor()
-        query = "SELECT time_created, data FROM message WHERE json_extract(data, '$.role') = 'assistant'"
-        params: list[int] = []
-        if start_ts is not None:
-            query += ' AND time_created >= ?'
-            params.append(start_ts)
-        if end_ts is not None:
-            query += ' AND time_created < ?'
-            params.append(end_ts)
-        cur.execute(query, params)
-        for time_created, data_str in cur:
-            try:
-                msg = json.loads(data_str)
-            except json.JSONDecodeError:
-                continue
-            bucket = classify_opencode_bucket(msg.get('providerID', ''), msg.get('modelID', ''))
-            if bucket is None:
-                continue
-            tokens = msg.get('tokens', {})
-            total = int(tokens.get('input', 0) or 0) + int(tokens.get('output', 0) or 0)
-            cache = tokens.get('cache', {})
-            if isinstance(cache, dict):
-                total += int(cache.get('read', 0) or 0) + int(cache.get('write', 0) or 0)
-            total += int(tokens.get('reasoning', 0) or 0)
-            if total <= 0:
-                continue
-            created_ts = msg.get('time', {}).get('created') or time_created
-            if not created_ts:
-                continue
-            totals[bucket][datetime.fromtimestamp(created_ts / 1000).date()] += total
-        conn.close()
-    except (sqlite3.Error, TypeError, ValueError):
-        return empty_opencode_totals()
-
-    return {key: dict(value) for key, value in totals.items()}
-
-
-def load_opencode(start_ts: int | None = None, end_ts: int | None = None):
-    """Load OpenCode token usage, using opencode_skill archive support when available."""
-    configure_opencode_skill_path()
-    try:
-        ocs_query = importlib.import_module('opencode_skill.query')
-    except ImportError as e:
-        print(f"opencode_skill not importable: {e}. Falling back to the main local OpenCode DB.", file=sys.stderr)
-        return load_opencode_from_db(start_ts=start_ts, end_ts=end_ts)
-
-    totals = {
-        'anthropic': defaultdict(int),
-        'gpt_opencode': defaultdict(int),
-        'gemini': defaultdict(int),
-        'glm_opencode': defaultdict(int),
-        'deepseek': defaultdict(int),
-        'grok': defaultdict(int),
-        'qwen': defaultdict(int),
-        'kimi': defaultdict(int),
-        'opencode_other': defaultdict(int),
-    }
-    for m in ocs_query.iter_assistant_messages(since_ms=start_ts, until_ms=end_ts, archive_dbs=_opencode_extra_dbs()):
+    for m in messages:
         bucket = classify_opencode_bucket(m.provider or '', m.model or '')
         if bucket is None:
             continue
@@ -1452,78 +1455,29 @@ def load_opencode(start_ts: int | None = None, end_ts: int | None = None):
     return {key: dict(value) for key, value in totals.items()}
 
 
+def load_opencode(start_ts: int | None = None, end_ts: int | None = None):
+    return _aggregate_opencode(iter_opencode_messages(start_ts, end_ts))
+
+
 def load_opencode_detailed(start_ts: int | None = None, end_ts: int | None = None):
     """
     Load per-model token breakdown for cost calculation.
     Returns: {date: {model_id: {input, output, cache_read, cache_write}}}
     """
     daily_models = defaultdict(lambda: defaultdict(lambda: {'input': 0, 'output': 0, 'cache_read': 0, 'cache_write': 0}))
-    configure_opencode_skill_path()
-    try:
-        ocs_query = importlib.import_module('opencode_skill.query')
-    except ImportError:
-        ocs_query = None
-
-    if ocs_query is not None:
-        for m in ocs_query.iter_assistant_messages(since_ms=start_ts, until_ms=end_ts, archive_dbs=_opencode_extra_dbs()):
-            raw_model_id = m.model or 'unknown'
-            if classify_opencode_bucket(m.provider or '', raw_model_id) is None:
-                continue
-            model_id = pricing_model_id(m.provider or '', raw_model_id)
-            total = m.tokens_input + m.tokens_output + m.tokens_reasoning + m.tokens_cache_read + m.tokens_cache_write
-            if total <= 0:
-                continue
-            dt = datetime.fromtimestamp(m.time_created / 1000).date()
-            daily_models[dt][model_id]['input'] += m.tokens_input
-            daily_models[dt][model_id]['output'] += m.tokens_output + m.tokens_reasoning
-            daily_models[dt][model_id]['cache_read'] += m.tokens_cache_read
-            daily_models[dt][model_id]['cache_write'] += m.tokens_cache_write
-        return dict(daily_models)
-
-    if not OPENCODE_DB.exists():
-        return dict(daily_models)
-
-    try:
-        conn = sqlite3.connect(f'file:{OPENCODE_DB}?mode=ro', uri=True)
-        cur = conn.cursor()
-        query = "SELECT time_created, data FROM message WHERE json_extract(data, '$.role') = 'assistant'"
-        params: list[int] = []
-        if start_ts is not None:
-            query += ' AND time_created >= ?'
-            params.append(start_ts)
-        if end_ts is not None:
-            query += ' AND time_created < ?'
-            params.append(end_ts)
-        cur.execute(query, params)
-        for time_created, data_str in cur:
-            try:
-                msg = json.loads(data_str)
-                provider_id = msg.get('providerID', '')
-                model_id = msg.get('modelID', '') or 'unknown'
-                if classify_opencode_bucket(provider_id, model_id) is None:
-                    continue
-                model_id = pricing_model_id(provider_id, model_id)
-                tokens = msg.get('tokens', {})
-                inp = tokens.get('input', 0)
-                out = tokens.get('output', 0) + tokens.get('reasoning', 0)
-                cache = tokens.get('cache', {})
-                cache_r = cache.get('read', 0)
-                cache_w = cache.get('write', 0)
-                if inp + out + cache_r + cache_w == 0:
-                    continue
-                created_ts = msg.get('time', {}).get('created') or time_created
-                if not created_ts:
-                    continue
-                dt = datetime.fromtimestamp(created_ts / 1000).date()
-                daily_models[dt][model_id]['input'] += inp
-                daily_models[dt][model_id]['output'] += out
-                daily_models[dt][model_id]['cache_read'] += cache_r
-                daily_models[dt][model_id]['cache_write'] += cache_w
-            except (json.JSONDecodeError, KeyError, TypeError):
-                continue
-        conn.close()
-    except sqlite3.Error:
-        pass
+    for m in iter_opencode_messages(start_ts, end_ts):
+        raw_model_id = m.model or 'unknown'
+        if classify_opencode_bucket(m.provider or '', raw_model_id) is None:
+            continue
+        model_id = pricing_model_id(m.provider or '', raw_model_id)
+        total = m.tokens_input + m.tokens_output + m.tokens_reasoning + m.tokens_cache_read + m.tokens_cache_write
+        if total <= 0:
+            continue
+        dt = datetime.fromtimestamp(m.time_created / 1000).date()
+        daily_models[dt][model_id]['input'] += m.tokens_input
+        daily_models[dt][model_id]['output'] += m.tokens_output + m.tokens_reasoning
+        daily_models[dt][model_id]['cache_read'] += m.tokens_cache_read
+        daily_models[dt][model_id]['cache_write'] += m.tokens_cache_write
     return dict(daily_models)
 
 
@@ -1789,32 +1743,10 @@ def build_opencode_turn_intervals(messages: list[OpencodeTurnMessage]) -> list[T
 
 
 def load_opencode_turn_intervals(start_ts: int | None = None, end_ts: int | None = None) -> list[TimeInterval]:
-    if not OPENCODE_DB.exists():
-        return []
-
+    main, extra = _opencode_sources()
     messages: list[OpencodeTurnMessage] = []
-    try:
-        conn = sqlite3.connect(f'file:{OPENCODE_DB}?mode=ro', uri=True)
-        cur = conn.cursor()
-        query = """
-            SELECT session_id, time_created, data
-            FROM message
-            WHERE json_extract(data, '$.role') IN ('user', 'assistant')
-        """
-        params: list[int] = []
-        if start_ts is not None:
-            query += ' AND time_created >= ?'
-            params.append(start_ts)
-        if end_ts is not None:
-            query += ' AND time_created < ?'
-            params.append(end_ts)
-        query += ' ORDER BY session_id, time_created'
-        cur.execute(query, params)
-        for session_id, time_created, data_str in cur:
-            try:
-                data = json.loads(data_str)
-            except json.JSONDecodeError:
-                continue
+    for _, session_id, time_created, data in _iter_opencode_sql([main, *extra], start_ts, end_ts):
+        if data.get('role') in ('user', 'assistant'):
             messages.append({
                 'session_id': session_id,
                 'time': datetime.fromtimestamp(time_created / 1000),
@@ -1822,10 +1754,6 @@ def load_opencode_turn_intervals(start_ts: int | None = None, end_ts: int | None
                 'provider_id': data.get('providerID', ''),
                 'model_id': data.get('modelID', ''),
             })
-        conn.close()
-    except sqlite3.Error:
-        return []
-
     return build_opencode_turn_intervals(messages)
 
 
