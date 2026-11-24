@@ -258,7 +258,9 @@ def analyze_plan(plan: str, samples: Iterable[dict], usage: list[UsageEvent], *,
     errors = {s: e for s, e in (source_errors or {}).items() if plan in SOURCE_PLANS.get(s, set())}
     if errors:
         for window in windows:
-            if window['status'] in ('estimated', 'unstable_measurement'):
+            if window['status'] in ('estimated', 'unstable_measurement') or (
+                'grok_native' in errors and window['status'] == 'usage_missing'
+            ):
                 window['status'] = 'usage_incomplete'
     if any(w['status'] == 'known_limit' for w in windows):
         status = 'known_limit'
@@ -303,10 +305,14 @@ def build_report(plans: list[str], *, days: float = 7, path: str | None = None, 
         earliest = min(utc_time(s['observed_at']) for s in samples)
         latest = max(utc_time(s['observed_at']) for s in samples)
         active = {s['provider'] for s in samples}
-        if assume_grok_cli_subscription:
+        grok_accounts = {s.get('account_fingerprint') for s in samples
+                         if s['provider'] == 'grok' and s.get('measurement_source') not in ('cache', 'local_log')}
+        if assume_grok_cli_subscription and len(grok_accounts) <= 1:
             events, diagnostics = collect_usage(active, earliest, latest, assume_grok_cli_subscription=True)
         else:
             events, diagnostics = collect_usage(active, earliest, latest)
+            if assume_grok_cli_subscription and len(grok_accounts) > 1:
+                diagnostics['source_errors']['grok_native'] = 'Multiple Grok quota account identities; CLI usage cannot be assigned to one account'
     results = [analyze_plan(p, samples, events, min_change=min_change,
                            source_errors=diagnostics['source_errors']) for p in plans]
     for result in results:

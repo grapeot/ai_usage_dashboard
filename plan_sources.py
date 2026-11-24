@@ -180,7 +180,8 @@ def collect_usage(plans: set[str], start: datetime, end: datetime, *,
                 errors[source] = 'OSError'
             dashboard.iter_claude_session_files = lambda project_dirs=None: iter(files)
         try:
-            records = (iter_grok_cli_records(start_local, end_local, strict=True)
+            records = (iter_grok_cli_records(start_local, end_local,
+                                             on_issue=lambda message: errors.setdefault('grok_native', message))
                        if source == 'grok_native' else SOURCES[source](start_local, end_local))
             for record in records:
                 if not utc_time(start) <= utc_time(record.time) < utc_time(end) or record.total() == 0:
@@ -194,7 +195,7 @@ def collect_usage(plans: set[str], start: datetime, end: datetime, *,
                 if source == 'grok_native':
                     # Native logs do not identify the historical account or auth route.
                     if not assume_grok_cli_subscription:
-                        errors[source] = 'Grok CLI billing is unverified; subscription and API-key activity cannot be separated from these logs'
+                        errors.setdefault(source, 'Grok CLI billing is unverified; subscription and API-key activity cannot be separated from these logs')
                         excluded['grok_native:billing_unverified'] += 1
                         continue
                     plan = 'grok'

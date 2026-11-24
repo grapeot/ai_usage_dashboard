@@ -21,7 +21,7 @@ from __future__ import annotations
 from collections import defaultdict
 from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta
-from typing import Iterator
+from typing import Callable, Iterator
 
 import auto_usage as _auto
 import antigravity_usage as _ag
@@ -190,8 +190,9 @@ def iter_antigravity_records(start: datetime, end: datetime) -> Iterator[UsageRe
         )
 
 
-def iter_grok_cli_records(start: datetime, end: datetime, *, strict: bool = False) -> Iterator[UsageRecord]:
-    for r in _grok_usage.iter_cli_usage(start, end, strict=strict):
+def iter_grok_cli_records(start: datetime, end: datetime, *,
+                          on_issue: Callable[[str], None] | None = None) -> Iterator[UsageRecord]:
+    for r in _grok_usage.iter_cli_usage(start, end, on_issue=on_issue):
         yield UsageRecord(time=r.time, provider='grok', model=r.model,
                           input_non_cached=r.input, input_cached=r.cache_read,
                           output=r.output, cache_write=r.cache_write,
