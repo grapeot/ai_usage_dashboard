@@ -37,7 +37,7 @@ class CategoryTotals(BaseModel):
     claude: int = Field(default=0, description='Total Anthropic Claude tokens for the window (Claude Code plus OpenCode-routed Anthropic).')
     gpt_opencode: int = Field(default=0, description='Total OpenAI GPT tokens for the window, including Codex.')
     deepseek: int = Field(default=0, description='Total DeepSeek tokens for the window.')
-    grok: int = Field(default=0, description='Total xAI Grok tokens for the window (OpenCode xai/grok-* and related routes).')
+    grok: int = Field(default=0, description='Total xAI Grok tokens for the window, including native Grok Build CLI.')
     qwen: int = Field(default=0, description='Total Qwen tokens for the window (OpenCode/Antigravity routes whose provider or model name contains "qwen").')
     kimi: int = Field(default=0, description='Total Moonshot Kimi tokens for the window (moonshotai-cn/moonshotai API and kimi-code-plan-cn/global coding-plan routes).')
     other: int = Field(default=0, description='Total tokens from providers not classified into the buckets above.')
@@ -232,7 +232,7 @@ class ModelDailyEntry(BaseModel):
 class ModelBreakdownEntry(BaseModel):
     """Per-model token usage from one data source."""
 
-    source: str = Field(description='Data source label: opencode, claude_code, antigravity, cursor, glm, or codex.')
+    source: str = Field(description='Data source label: opencode, claude_code, antigravity, cursor, dsh, grok_native, or codex.')
     model: str = Field(description='Model identifier as reported by the source, e.g. gpt-5.6-sol, claude-opus-5, composer-2.5-fast.')
     totals: ModelTokenTotals = Field(default_factory=ModelTokenTotals, description='Token totals for this model across the full date window.')
     daily: list[ModelDailyEntry] = Field(default_factory=list, description='Per-day token entries for this model, ordered by date. Empty when ?daily=false is passed.')

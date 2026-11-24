@@ -2245,6 +2245,11 @@ def build_latest_dashboard_payload(days: int = 30, *, no_cost: bool = False, ski
     opencode_kimi = opencode_data.get('kimi', {})
     opencode_other = opencode_data['opencode_other']
 
+    grok_cli = _grok_usage.load_cli_detailed(datetime.fromtimestamp(start_day_ts / 1000),
+                                           datetime.fromtimestamp(next_day_ts / 1000))
+    for d, models in grok_cli.items():
+        opencode_grok[d] = opencode_grok.get(d, 0) + sum(row['total'] for row in models.values())
+
     print("Loading Antigravity IDE data from live Language Server...")
     antigravity_data = load_antigravity()
     for d, v in antigravity_data.get('gemini', {}).items():
@@ -2277,6 +2282,9 @@ def build_latest_dashboard_payload(days: int = 30, *, no_cost: bool = False, ski
     daily_active_seconds = compute_daily_ai_active_seconds(opencode_turn_intervals, codex_turn_intervals, start_date, end_date)
 
     daily_costs = compute_daily_costs(start_date, end_date, start_day_ts, next_day_ts, codex, dsh_detailed=dsh_detailed, codex_detailed=codex_detailed) if not no_cost else None
+    if daily_costs is not None:
+        for d, value in calc_opencode_cost(grok_cli).items():
+            daily_costs[d] = daily_costs.get(d, 0.0) + value
     if daily_costs is not None and antigravity_detailed:
         for d, v in calc_antigravity_cost(antigravity_detailed).items():
             if start_d <= d <= end_d:
@@ -2383,6 +2391,8 @@ def build_model_breakdown(days: int = 30, *, include_daily: bool = True) -> dict
     # OpenCode (per-model detailed, includes zai-coding-plan GLM)
     oc_detail = load_opencode_detailed(start_ts=start_ts, end_ts=next_day_ts)
     source_data['opencode'] = oc_detail
+    source_data['grok_native'] = _grok_usage.load_cli_detailed(datetime.fromtimestamp(start_ts / 1000),
+                                                              datetime.fromtimestamp(next_day_ts / 1000))
 
     # Claude Code (per-model detailed)
     cc_detail = load_claude_code_detailed(start_date=start_d, end_date=end_d)

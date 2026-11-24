@@ -119,8 +119,13 @@ or ambiguous evidence: `insufficient_change`, `saturated`, `usage_missing`,
 `usage_incomplete`, `quota_scope_unresolved`, `unpriced_usage`, `quota_stale`,
 `quota_unavailable`, `window_identity_missing`, `window_unavailable`, and
 `unstable_measurement`. In particular, a flat or full meter does not imply
-infinite capacity. Antigravity family maxima do not establish billing pools;
-native Grok CLI activity is reported as incomplete token coverage.
+infinite capacity. Antigravity family maxima do not establish billing pools.
+Grok Build CLI prompt totals are included in the dashboard and shown separately
+in the model breakdown (`grok_native`). Its historical logs do not identify
+subscription versus API-key billing. For a known subscription-only history,
+pass `--assume-grok-cli-subscription` to `plan_usage` to include those records.
+The Grok report's `token_equivalent` shows endpoint and fitted extrapolations
+for the observed model/cache mix, not a fixed token entitlement.
 
 Parsers, snapshots, history, and APIs preserve fractional percentages; only
 e-ink presentation rounds. New history writes retain provider capture time

@@ -7,14 +7,143 @@ Auth is a browser cookie string in GROK_COOKIE (never commit real cookies).
 """
 from __future__ import annotations
 
+import json
+import logging
 import struct
+from collections import defaultdict
+from dataclasses import dataclass
 from datetime import datetime
-from typing import Any
+from pathlib import Path
+from typing import Any, Callable, Iterator
 
 
 GROK_CREDITS_URL = 'https://grok.com/grok_api_v2.GrokBuildBilling/GetGrokCreditsConfig'
 # Empty GetGrokCreditsConfigRequest inside a grpc-web data frame.
 _GRPC_WEB_EMPTY_REQUEST = b'\x00\x00\x00\x00\x00'
+
+
+@dataclass(frozen=True)
+class CliUsage:
+    time: datetime
+    model: str
+    record_id: str
+    input: int
+    output: int
+    cache_read: int
+    cache_write: int
+
+    @property
+    def total(self) -> int:
+        return self.input + self.output + self.cache_read + self.cache_write
+
+
+def _cli_token_split(usage: dict) -> tuple[int, int, int, int] | None:
+    total, inp, out = (usage.get(k) for k in ('totalTokens', 'inputTokens', 'outputTokens'))
+    read, write = (usage.get(k, 0) for k in ('cachedReadTokens', 'cacheCreationTokens'))
+    if any(type(v) is not int or v < 0 for v in (total, inp, out, read, write)):
+        return None
+    # The native counters already include cache reads in input and reasoning
+    # in output. Reconcile with the reported total before splitting.
+    if total == inp + out and read + write <= inp:
+        # xAI has no separate cache-creation price; keep those tokens in input.
+        return inp - read, out, read, 0
+    return None
+
+
+def _completion_events(root: Path, lo: float, issue: Callable[[str], None]) -> Iterator[tuple[Path, dict]]:
+    for path in sorted(root.glob('*/*/updates.jsonl')):
+        try:
+            if path.stat().st_mtime < lo:
+                continue
+            with path.open(encoding='utf-8', errors='replace') as handle:
+                for line in handle:
+                    if 'turn_completed' not in line:
+                        continue
+                    try:
+                        event = json.loads(line)
+                    except ValueError:
+                        if line.endswith('\n'):
+                            issue('Malformed Grok CLI completion JSON')
+                        continue  # A live writer may have a trailing partial line.
+                    if isinstance(event, dict):
+                        yield path, event
+        except FileNotFoundError:
+            continue
+        except OSError:
+            issue('Could not read a Grok CLI session log')
+
+
+def iter_cli_usage(start: datetime, end: datetime, *, root: Path | None = None,
+                   on_issue: Callable[[str], None] | None = None) -> Iterator[CliUsage]:
+    """Read usage per completed prompt; stream chunks are not usage events."""
+    root = root if root is not None else Path.home() / '.grok' / 'sessions'
+    lo, hi = start.timestamp(), end.timestamp()
+    issue = on_issue or (lambda _: None)
+    seen: dict[tuple[str, str], tuple] = {}
+    for path, event in _completion_events(root, lo, issue):
+        params = event.get('params')
+        update = params.get('update') if isinstance(params, dict) else None
+        if not isinstance(update, dict) or update.get('sessionUpdate') != 'turn_completed':
+            continue
+        timestamp = event.get('timestamp')
+        if type(timestamp) not in (int, float):
+            issue('Grok CLI completion has no event time')
+            continue
+        if not lo <= timestamp < hi:
+            continue
+        usage = update.get('usage')
+        if usage is None and update.get('stop_reason') == 'error':
+            continue  # No usage was emitted for this failed completion.
+        split = _cli_token_split(usage) if isinstance(usage, dict) else None
+        if split is None:
+            issue('Grok CLI completion lacks a consistent token split')
+            continue
+        if not sum(split):
+            continue
+        meta = params.get('_meta')
+        event_id = meta.get('eventId') if isinstance(meta, dict) else None
+        prompt = update.get('prompt_id') or event_id or event.get('timestamp_us')
+        if prompt is None:
+            issue('Grok CLI completion has no stable deduplication ID')
+            continue
+        key = (str(params.get('sessionId') or path.parent.name), str(prompt))
+        model_usage = usage.get('modelUsage')
+        models = _cli_models(model_usage, split)
+        signature = tuple(sorted(models))
+        if key in seen:
+            if seen[key] != signature:
+                issue('Conflicting Grok CLI completion counters')
+            continue
+        seen[key] = signature
+        for model, counts in models:
+            yield CliUsage(datetime.fromtimestamp(timestamp), model, json.dumps((*key, model)), *counts)
+
+
+def _cli_models(model_usage: object, split: tuple[int, int, int, int]) -> list:
+    if isinstance(model_usage, dict):
+        models = []
+        for model, parts in model_usage.items():
+            model_split = _cli_token_split(parts) if isinstance(parts, dict) else None
+            if model_split is None:
+                break
+            if sum(model_split):
+                models.append((model, model_split))
+        else:
+            if tuple(map(sum, zip(*(v for _, v in models)))) == split:
+                return models
+    return [('unknown', split)]
+
+
+def load_cli_detailed(start: datetime, end: datetime) -> dict:
+    daily: dict = defaultdict(dict)
+    issues: set[str] = set()
+    for record in iter_cli_usage(start, end, on_issue=issues.add):
+        row = daily[record.time.date()].setdefault(record.model, dict(input=0, output=0, cache_read=0, cache_write=0, total=0))
+        for key in row:
+            row[key] += getattr(record, key)
+    for issue in sorted(issues):
+        logging.getLogger(__name__).warning('%s; Grok CLI totals may be incomplete', issue)
+    return dict(daily)
 
 
 def _read_varint(buf: bytes, i: int) -> tuple[int, int]:

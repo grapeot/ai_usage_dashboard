@@ -21,12 +21,13 @@ from __future__ import annotations
 from collections import defaultdict
 from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta
-from typing import Iterator
+from typing import Callable, Iterator
 
 import auto_usage as _auto
 import antigravity_usage as _ag
 import codex_local as _codex_local
 import dsh_usage as _dsh_usage
+import grok_usage as _grok_usage
 from pricing_config import calc_cost_from_parts, get_pricing
 
 
@@ -189,6 +190,15 @@ def iter_antigravity_records(start: datetime, end: datetime) -> Iterator[UsageRe
         )
 
 
+def iter_grok_cli_records(start: datetime, end: datetime, *,
+                          on_issue: Callable[[str], None] | None = None) -> Iterator[UsageRecord]:
+    for r in _grok_usage.iter_cli_usage(start, end, on_issue=on_issue):
+        yield UsageRecord(time=r.time, provider='grok', model=r.model,
+                          input_non_cached=r.input, input_cached=r.cache_read,
+                          output=r.output, cache_write=r.cache_write,
+                          source='grok_native', billing_provider='xai', record_id=r.record_id)
+
+
 def iter_cursor_records(start: datetime, end: datetime) -> Iterator[UsageRecord]:
     import csv
     import os
@@ -234,6 +244,7 @@ SOURCES: dict[str, callable] = {
     'codex': iter_codex_records,
     'antigravity': iter_antigravity_records,
     'cursor': iter_cursor_records,
+    'grok_native': iter_grok_cli_records,
 }
 
 # The dashboard's daily cost model prices Codex, DSH, OpenCode, Claude Code, and
