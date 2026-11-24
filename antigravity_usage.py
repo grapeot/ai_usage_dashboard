@@ -148,14 +148,85 @@ def probe_heartbeat(port: int, csrf_token: str) -> bool:
         return False
 
 
+def _is_safe_header_token(csrf: str) -> bool:
+    """Reject tokens that cannot ride in an HTTP header verbatim.
+
+    Daemon files are parsed best-effort from disk. A token holding control
+    characters or an unencodable lone surrogate would raise when the RPC
+    request is built and abort discovery, so such entries are skipped here.
+    """
+    try:
+        csrf.encode('utf-8')
+    except UnicodeEncodeError:
+        return False
+    return all(0x20 <= ord(char) < 0x7F for char in csrf)
+
+
+def read_daemon_connections(
+    gemini_home: str | None = None,
+) -> list[tuple[int, str, int]]:
+    """Read ``(pid, csrf_token, http_port)`` entries from Antigravity daemon files.
+
+    Antigravity 2.35.1 no longer passes ``--csrf_token`` on the Language
+    Server command line. The LS receives its token over stdin and persists
+    connection metadata to ``~/.gemini/<app_data_dir>/daemon/hub_<port>.json``
+    with fields ``pid``, ``httpPort``, and ``csrfToken``. Parsing is
+    best-effort: any unreadable, unparseable, or incomplete file is skipped
+    so one bad record cannot hide the others.
+    """
+    base = gemini_home or os.path.join(os.path.expanduser('~'), '.gemini')
+    entries: list[tuple[int, str, int]] = []
+    seen: set[tuple[int, str, int]] = set()
+    for path in sorted(glob.glob(os.path.join(base, '*', 'daemon', 'hub_*.json'))):
+        try:
+            with open(path, encoding='utf-8') as handle:
+                data = json.load(handle)
+        except Exception:
+            continue
+        if not isinstance(data, dict):
+            continue
+        csrf = data.get('csrfToken')
+        pid = data.get('pid')
+        port = data.get('httpPort')
+        if (
+            not isinstance(csrf, str)
+            or len(csrf) < 32
+            or not _is_safe_header_token(csrf)
+            or not isinstance(pid, int)
+            or isinstance(pid, bool)
+            or pid <= 0
+            or not isinstance(port, int)
+            or isinstance(port, bool)
+            or not 1 <= port <= 65535
+        ):
+            continue
+        entry = (pid, csrf, port)
+        if entry not in seen:
+            seen.add(entry)
+            entries.append(entry)
+    return entries
+
+
 def discover_connections(
     *,
     extract_flag: Callable[[str, str], str | None] = extract_flag_value,
     command_matches: Callable[[str], bool] = is_ls_command,
     find_ports: Callable[[int], list[int]] = find_listening_ports,
     heartbeat_probe: Callable[[int, str], bool] = probe_heartbeat,
+    daemon_tokens: Callable[[], list[tuple[int, str, int]]] = read_daemon_connections,
 ) -> list[AntigravityConnection]:
-    """Find and verify running Antigravity Language Server processes."""
+    """Find and verify running Antigravity Language Server processes.
+
+    Two token sources are supported. Launches that carry ``--csrf_token``
+    in argv (older versions) use it directly. Newer launches (2.35.1+)
+    omit the flag and persist the token to a daemon metadata file; those
+    entries are matched by pid and filtered against the process's actual
+    listening ports plus a heartbeat probe, which filters out the common
+    stale-file cases (restarted LS, reused pid) although it cannot rule
+    out every race. Daemon files are scanned lazily — only when a
+    candidate process has no qualified argv token — and a scan failure
+    degrades to an empty result instead of breaking argv discovery.
+    """
     try:
         result = subprocess.run(
             ['ps', '-ww', '-eo', 'pid,args'],
@@ -179,14 +250,41 @@ def discover_connections(
             candidates.append((pid, parts[1]))
 
     connections: list[AntigravityConnection] = []
+    daemon_by_pid: dict[int, list[tuple[str, int]]] | None = None
     for pid, command in candidates:
         csrf = extract_flag(command, '--csrf_token')
-        if not csrf or len(csrf) < 32:
+        if csrf and len(csrf) >= 32:
+            for port in find_ports(pid):
+                if heartbeat_probe(port, csrf):
+                    connections.append(
+                        AntigravityConnection(pid=pid, port=port, csrf_token=csrf)
+                    )
+                    break
             continue
-        for port in find_ports(pid):
-            if heartbeat_probe(port, csrf):
+        if daemon_by_pid is None:
+            try:
+                daemon_entries = daemon_tokens()
+            except Exception:
+                print(
+                    'Antigravity: daemon token scan failed, '
+                    'falling back to argv-only discovery',
+                    file=sys.stderr,
+                )
+                daemon_entries = []
+            index: dict[int, list[tuple[str, int]]] = defaultdict(list)
+            for daemon_pid, token, port in daemon_entries:
+                index[daemon_pid].append((token, port))
+            daemon_by_pid = index
+        entries_for_pid = daemon_by_pid.get(pid, [])
+        if not entries_for_pid:
+            continue
+        listening = find_ports(pid)
+        for token, port in entries_for_pid:
+            if port not in listening:
+                continue
+            if heartbeat_probe(port, token):
                 connections.append(
-                    AntigravityConnection(pid=pid, port=port, csrf_token=csrf)
+                    AntigravityConnection(pid=pid, port=port, csrf_token=token)
                 )
                 break
     connections.sort(key=lambda connection: connection['pid'], reverse=True)

@@ -99,6 +99,373 @@ class TestIsAntigravityCommand:
         assert _is_antigravity_ls_command("language_server --other_app") is False
 
 
+class TestDaemonConnectionDiscovery:
+    CSRF = "00000000-1111-4222-8333-444455556666"
+
+    def _write_daemon_file(self, gemini_home, app_data, filename, payload):
+        daemon_dir = gemini_home / app_data / "daemon"
+        daemon_dir.mkdir(parents=True, exist_ok=True)
+        path = daemon_dir / filename
+        if isinstance(payload, str):
+            path.write_text(payload)
+        else:
+            path.write_text(json.dumps(payload))
+
+    def _ps_result(self, pid, command):
+        fake = MagicMock()
+        fake.stdout = f"  {pid} {command}\n"
+        return fake
+
+    def test_read_daemon_connections_parses_valid_file(self, tmp_path):
+        from antigravity_usage import read_daemon_connections
+
+        self._write_daemon_file(
+            tmp_path, "antigravity", "hub_49578.json",
+            {"pid": 40614, "httpPort": 49578, "httpsPort": 49577,
+             "csrfToken": self.CSRF, "lsVersion": "2.35.1"},
+        )
+        assert read_daemon_connections(str(tmp_path)) == [(40614, self.CSRF, 49578)]
+
+    def test_read_daemon_connections_skips_invalid_entries(self, tmp_path):
+        from antigravity_usage import read_daemon_connections
+
+        self._write_daemon_file(tmp_path, "antigravity", "hub_1.json", "not json")
+        self._write_daemon_file(tmp_path, "antigravity", "hub_2.json", {"pid": 1})
+        self._write_daemon_file(
+            tmp_path, "antigravity", "hub_3.json",
+            {"pid": 2, "httpPort": 5000, "csrfToken": "short"},
+        )
+        self._write_daemon_file(
+            tmp_path, "antigravity", "hub_4.json",
+            {"pid": "40614", "httpPort": 49578, "csrfToken": self.CSRF},
+        )
+        self._write_daemon_file(
+            tmp_path, "antigravity", "hub_5.json",
+            {"pid": True, "httpPort": 49578, "csrfToken": self.CSRF},
+        )
+        self._write_daemon_file(
+            tmp_path, "antigravity", "hub_6.json",
+            {"pid": 5, "httpPort": True, "csrfToken": self.CSRF},
+        )
+        self._write_daemon_file(
+            tmp_path, "antigravity", "hub_7.json", "[1, 2, 3]",
+        )
+        self._write_daemon_file(
+            tmp_path, "antigravity", "hub_8.json",
+            {"pid": 6, "httpPort": 0, "csrfToken": self.CSRF},
+        )
+        self._write_daemon_file(
+            tmp_path, "antigravity", "hub_9.json",
+            {"pid": 6, "httpPort": 70000, "csrfToken": self.CSRF},
+        )
+        self._write_daemon_file(
+            tmp_path, "antigravity", "hub_10.json",
+            {"pid": 7, "httpPort": 49578, "csrfToken": "aaaa\x01bbbb-cccc-4ddd-8eee-ffff00001111"},
+        )
+        self._write_daemon_file(
+            tmp_path, "antigravity", "hub_11.json",
+            {"pid": 8, "httpPort": 49578, "csrfToken": "surrogate\ud800token-000000"},
+        )
+        assert read_daemon_connections(str(tmp_path)) == []
+
+    def test_read_daemon_connections_isolates_bad_file(self, tmp_path):
+        from antigravity_usage import read_daemon_connections
+
+        self._write_daemon_file(tmp_path, "antigravity", "hub_a.json", "{broken")
+        self._write_daemon_file(
+            tmp_path, "antigravity", "hub_b.json",
+            {"pid": 9, "httpPort": 5001, "csrfToken": self.CSRF},
+        )
+        assert read_daemon_connections(str(tmp_path)) == [(9, self.CSRF, 5001)]
+
+    def test_discover_falls_back_to_daemon_token(self):
+        import antigravity_usage
+
+        command = (
+            "/Applications/Antigravity.app/Contents/Resources/bin/language_server "
+            "--standalone --app_data_dir antigravity"
+        )
+        probed = []
+        with patch.object(
+            antigravity_usage.subprocess, "run",
+            return_value=self._ps_result(40614, command),
+        ):
+            connections = antigravity_usage.discover_connections(
+                find_ports=lambda pid: [49577, 49578, 49609],
+                heartbeat_probe=lambda port, csrf: (
+                    probed.append((port, csrf)) or (port == 49578 and csrf == self.CSRF)
+                ),
+                daemon_tokens=lambda: [(40614, self.CSRF, 49578)],
+            )
+        assert connections == [
+            {"pid": 40614, "port": 49578, "csrf_token": self.CSRF}
+        ]
+        # The daemon record names its HTTP port explicitly, so only that
+        # port is verified — the argv path is the one that sweeps ports.
+        assert probed == [(49578, self.CSRF)]
+
+    def test_discover_ignores_daemon_port_not_listening(self, tmp_path):
+        import antigravity_usage
+
+        command = "language_server --app_data_dir antigravity"
+        heartbeat_calls = []
+
+        def heartbeat(port, csrf):
+            heartbeat_calls.append((port, csrf))
+            return True
+
+        with patch.object(
+            antigravity_usage.subprocess, "run",
+            return_value=self._ps_result(40614, command),
+        ):
+            connections = antigravity_usage.discover_connections(
+                find_ports=lambda pid: [50000],
+                heartbeat_probe=heartbeat,
+                daemon_tokens=lambda: [(40614, self.CSRF, 49578)],
+            )
+        assert connections == []
+        assert heartbeat_calls == []
+
+    def test_discover_pid_mismatch_skips_heartbeat(self):
+        import antigravity_usage
+
+        command = "language_server --app_data_dir antigravity"
+        heartbeat_calls = []
+        # Daemon record for a different pid whose port coincides with the
+        # candidate's listening ports: the pid filter must skip it before
+        # any heartbeat is sent.
+        with patch.object(
+            antigravity_usage.subprocess, "run",
+            return_value=self._ps_result(40614, command),
+        ):
+            connections = antigravity_usage.discover_connections(
+                find_ports=lambda pid: [49578],
+                heartbeat_probe=lambda port, csrf: heartbeat_calls.append((port, csrf)),
+                daemon_tokens=lambda: [(99999, self.CSRF, 49578)],
+            )
+        assert connections == []
+        assert heartbeat_calls == []
+
+    def test_discover_retries_next_token_after_rejection(self):
+        import antigravity_usage
+
+        command = "language_server --app_data_dir antigravity"
+        stale = "99999999-8888-4777-8666-555544443333"
+        probed = []
+        with patch.object(
+            antigravity_usage.subprocess, "run",
+            return_value=self._ps_result(40614, command),
+        ):
+            connections = antigravity_usage.discover_connections(
+                find_ports=lambda pid: [49578],
+                heartbeat_probe=lambda port, csrf: (
+                    probed.append((port, csrf)) or csrf == self.CSRF
+                ),
+                daemon_tokens=lambda: [
+                    (40614, stale, 49578),
+                    (40614, self.CSRF, 49578),
+                ],
+            )
+        assert connections == [
+            {"pid": 40614, "port": 49578, "csrf_token": self.CSRF}
+        ]
+        assert probed == [(49578, stale), (49578, self.CSRF)]
+
+    def test_discover_multiple_ls_each_uses_own_record(self):
+        import antigravity_usage
+
+        other = "aaaa1111-bbbb-4ccc-8ddd-eeeeffff0000"
+        commands = {
+            40614: "language_server --app_data_dir antigravity",
+            50000: "language_server --app_data_dir antigravity",
+        }
+        fake = MagicMock()
+        fake.stdout = "".join(
+            f"  {pid} {command}\n" for pid, command in commands.items()
+        )
+        probed = []
+        with patch.object(antigravity_usage.subprocess, "run", return_value=fake):
+            connections = antigravity_usage.discover_connections(
+                find_ports=lambda pid: [24614, 25000],
+                heartbeat_probe=lambda port, csrf: (
+                    probed.append((port, csrf)) or True
+                ),
+                daemon_tokens=lambda: [
+                    (40614, self.CSRF, 24614),
+                    (50000, other, 25000),
+                ],
+            )
+        assert connections == [
+            {"pid": 50000, "port": 25000, "csrf_token": other},
+            {"pid": 40614, "port": 24614, "csrf_token": self.CSRF},
+        ]
+
+    def test_discover_dedupes_identical_daemon_entries(self):
+        import antigravity_usage
+
+        command = "language_server --app_data_dir antigravity"
+        probed = []
+        with patch.object(
+            antigravity_usage.subprocess, "run",
+            return_value=self._ps_result(40614, command),
+        ):
+            connections = antigravity_usage.discover_connections(
+                find_ports=lambda pid: [49578],
+                heartbeat_probe=lambda port, csrf: (
+                    probed.append((port, csrf)) or True
+                ),
+                daemon_tokens=lambda: [
+                    (40614, self.CSRF, 49578),
+                    (40614, self.CSRF, 49578),
+                ],
+            )
+        assert connections == [
+            {"pid": 40614, "port": 49578, "csrf_token": self.CSRF}
+        ]
+        assert probed == [(49578, self.CSRF)]
+
+    def test_discover_argv_skips_daemon_scan(self):
+        import antigravity_usage
+
+        command = (
+            "language_server --app_data_dir antigravity "
+            f"--csrf_token {self.CSRF}"
+        )
+        scanned = []
+
+        def daemon_tokens():
+            scanned.append(True)
+            return [(40614, self.CSRF, 49578)]
+
+        with patch.object(
+            antigravity_usage.subprocess, "run",
+            return_value=self._ps_result(40614, command),
+        ):
+            connections = antigravity_usage.discover_connections(
+                find_ports=lambda pid: [52500],
+                heartbeat_probe=lambda port, csrf: csrf == self.CSRF,
+                daemon_tokens=daemon_tokens,
+            )
+        assert connections == [
+            {"pid": 40614, "port": 52500, "csrf_token": self.CSRF}
+        ]
+        assert scanned == []
+
+    def test_discover_daemon_scan_failure_degrades_to_empty(self):
+        import antigravity_usage
+
+        command = "language_server --app_data_dir antigravity"
+
+        def broken_scan():
+            raise RuntimeError("disk exploded")
+
+        with patch.object(
+            antigravity_usage.subprocess, "run",
+            return_value=self._ps_result(40614, command),
+        ):
+            connections = antigravity_usage.discover_connections(
+                find_ports=lambda pid: [49578],
+                heartbeat_probe=lambda port, csrf: True,
+                daemon_tokens=broken_scan,
+            )
+        assert connections == []
+
+    def test_discover_no_daemon_record_skips_lsof(self):
+        import antigravity_usage
+
+        command = "language_server --app_data_dir antigravity"
+        lsof_calls = []
+
+        def find_ports(pid):
+            lsof_calls.append(pid)
+            return [49578]
+
+        with patch.object(
+            antigravity_usage.subprocess, "run",
+            return_value=self._ps_result(40614, command),
+        ):
+            connections = antigravity_usage.discover_connections(
+                find_ports=find_ports,
+                heartbeat_probe=lambda port, csrf: True,
+                daemon_tokens=lambda: [(99999, self.CSRF, 49578)],
+            )
+        assert connections == []
+        assert lsof_calls == []
+
+    def test_discover_argv_token_still_works(self):
+        import antigravity_usage
+
+        command = (
+            "language_server --app_data_dir antigravity "
+            f"--csrf_token {self.CSRF}"
+        )
+        with patch.object(
+            antigravity_usage.subprocess, "run",
+            return_value=self._ps_result(40614, command),
+        ):
+            connections = antigravity_usage.discover_connections(
+                find_ports=lambda pid: [52500],
+                heartbeat_probe=lambda port, csrf: csrf == self.CSRF,
+                daemon_tokens=lambda: [],
+            )
+        assert connections == [
+            {"pid": 40614, "port": 52500, "csrf_token": self.CSRF}
+        ]
+
+    def test_export_quota_end_to_end_with_daemon_fallback(self, tmp_path):
+        """Hermetic wiring test: temp daemon file through the real
+        discover path into export_quota, with only process listing, port
+        enumeration, and the network boundary mocked."""
+        import antigravity_usage
+
+        command = (
+            "/Applications/Antigravity.app/Contents/Resources/bin/language_server "
+            "--standalone --app_data_dir antigravity"
+        )
+        self._write_daemon_file(
+            tmp_path, "antigravity", "hub_49578.json",
+            {"pid": 40614, "httpPort": 49578, "csrfToken": self.CSRF},
+        )
+        mock_resp = {
+            "clientModelConfigs": [
+                {
+                    "label": "Gemini 3.5 Flash (Medium)",
+                    "modelOrAlias": {"model": "MODEL_PLACEHOLDER_M20"},
+                    "quotaInfo": {"remainingFraction": 0.92,
+                                  "resetTime": "2026-06-30T00:38:31Z"},
+                },
+            ]
+        }
+
+        def rpc_call(connection, method, body):
+            assert connection["csrf_token"] == self.CSRF
+            assert connection["port"] == 49578
+            if method == "RetrieveUserQuotaSummary":
+                return None
+            return mock_resp
+
+        def discover():
+            with patch.object(
+                antigravity_usage.subprocess, "run",
+                return_value=self._ps_result(40614, command),
+            ):
+                return antigravity_usage.discover_connections(
+                    find_ports=lambda pid: [49578],
+                    heartbeat_probe=lambda port, csrf: csrf == self.CSRF,
+                    daemon_tokens=lambda: antigravity_usage.read_daemon_connections(
+                        str(tmp_path)
+                    ),
+                )
+
+        result = antigravity_usage.export_quota(
+            discover=discover,
+            rpc_call=rpc_call,
+        )
+        assert len(result) == 1
+        assert 'Gemini' in result[0]['label']
+        assert result[0]['percentage'] == 8
+
+
 class TestDechunk:
     def test_single_chunk(self):
         chunked = b'5\r\nHello\r\n0\r\n\r\n'

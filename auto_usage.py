@@ -1518,12 +1518,17 @@ def _is_antigravity_ls_command(command: str) -> bool:
     return _antigravity_usage.is_ls_command(command)
 
 
+def _antigravity_daemon_tokens() -> list[tuple[int, str, int]]:
+    return _antigravity_usage.read_daemon_connections()
+
+
 def _discover_antigravity_connections() -> list[AntigravityConnection]:
     return _antigravity_usage.discover_connections(
         extract_flag=_extract_flag_value,
         command_matches=_is_antigravity_ls_command,
         find_ports=_find_listening_ports,
         heartbeat_probe=_probe_antigravity_heartbeat,
+        daemon_tokens=_antigravity_daemon_tokens,
     )
 
 
