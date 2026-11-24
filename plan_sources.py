@@ -15,7 +15,7 @@ from urllib.parse import urlsplit
 import auto_usage as dashboard
 import antigravity_usage
 from pricing_config import calc_cost_from_parts, get_pricing
-from window_usage import SOURCES, UsageRecord
+from window_usage import SOURCES, UsageRecord, iter_grok_cli_records
 
 PLANS = ('ollama', 'grok', 'codex', 'claude', 'antigravity', 'cursor', 'glm')
 OLLAMA_PRICE_DATE = '2026-10-06'
@@ -138,36 +138,8 @@ def _claude_subscription() -> bool:
     return bool((credentials.get('claudeAiOauth') or {}).get('accessToken') or dashboard._read_claude_code_oauth_token())
 
 
-def _native_grok_activity(root: Path, start: datetime, end: datetime) -> bool:
-    for path in root.glob('*/*/updates.jsonl'):
-        if path.stat().st_mtime < start.timestamp():
-            continue
-        unknown_time = False
-        with path.open() as handle:
-            for line in handle:
-                try:
-                    item = json.loads(line)
-                except ValueError:
-                    continue
-                if not isinstance(item, dict):
-                    continue
-                params = item.get('params') or {}
-                update = params.get('update') or {}
-                if update.get('sessionUpdate') not in ('user_message_chunk', 'agent_message_chunk', 'agent_thought_chunk'):
-                    continue
-                timestamp = (params.get('_meta') or {}).get('agentTimestampMs')
-                if timestamp is None and isinstance(item.get('timestamp'), (int, float)):
-                    timestamp = item['timestamp'] * 1000
-                if not isinstance(timestamp, (int, float)):
-                    unknown_time = True
-                elif start.timestamp() * 1000 <= timestamp < end.timestamp() * 1000:
-                    return True
-        if unknown_time:
-            return True
-    return False
-
-
-def collect_usage(plans: set[str], start: datetime, end: datetime) -> tuple[list[UsageEvent], dict[str, Any]]:
+def collect_usage(plans: set[str], start: datetime, end: datetime, *,
+                  assume_grok_cli_subscription: bool = False) -> tuple[list[UsageEvent], dict[str, Any]]:
     """Read only local sources. No provider fetches or history writes occur here."""
     start_local = utc_time(start).astimezone().replace(tzinfo=None)
     end_local = utc_time(end).astimezone().replace(tzinfo=None)
@@ -180,6 +152,8 @@ def collect_usage(plans: set[str], start: datetime, end: datetime) -> tuple[list
     sources: set[str] = set()
     if plans & {'ollama', 'codex', 'grok', 'claude', 'glm'}:
         sources.add('opencode')
+    if 'grok' in plans:
+        sources.add('grok_native')
     if plans & {'ollama', 'glm'}:
         sources.add('dsh')
     if plans & {'ollama', 'codex'}:
@@ -206,7 +180,9 @@ def collect_usage(plans: set[str], start: datetime, end: datetime) -> tuple[list
                 errors[source] = 'OSError'
             dashboard.iter_claude_session_files = lambda project_dirs=None: iter(files)
         try:
-            for record in SOURCES[source](start_local, end_local):
+            records = (iter_grok_cli_records(start_local, end_local, strict=True)
+                       if source == 'grok_native' else SOURCES[source](start_local, end_local))
+            for record in records:
                 if not utc_time(start) <= utc_time(record.time) < utc_time(end) or record.total() == 0:
                     continue
                 if record.record_id:
@@ -215,7 +191,15 @@ def collect_usage(plans: set[str], start: datetime, end: datetime) -> tuple[list
                         excluded['duplicate_records'] += 1
                         continue
                     seen.add(key)
-                plan = route_plan(record, auth, codex_subscription=codex_subscription, claude_subscription=claude_subscription)
+                if source == 'grok_native':
+                    # Native logs do not identify the historical account or auth route.
+                    if not assume_grok_cli_subscription:
+                        errors[source] = 'Grok CLI billing is unverified; subscription and API-key activity cannot be separated from these logs'
+                        excluded['grok_native:billing_unverified'] += 1
+                        continue
+                    plan = 'grok'
+                else:
+                    plan = route_plan(record, auth, codex_subscription=codex_subscription, claude_subscription=claude_subscription)
                 if plan not in plans:
                     excluded[f'{source}:not_mapped_to_selected_plan'] += 1
                     continue
@@ -227,13 +211,4 @@ def collect_usage(plans: set[str], start: datetime, end: datetime) -> tuple[list
         finally:
             if source == 'claude':
                 dashboard.iter_claude_session_files = original_claude_files
-    # Native Grok CLI logs do not provide a dashboard token adapter yet. Detect
-    # observed activity instead of silently claiming that OpenCode is complete.
-    if 'grok' in plans:
-        root = Path.home() / '.grok/sessions'
-        try:
-            if root.exists() and _native_grok_activity(root, utc_time(start), utc_time(end)):
-                errors['grok_native'] = 'Native Grok CLI usage is not covered by the token adapters'
-        except OSError:
-            errors['grok_native'] = 'OSError'
     return events, {'source_errors': errors, 'excluded_records': dict(excluded)}

@@ -60,16 +60,14 @@ def test_collect_usage_is_local_and_deduplicates_archive_copies(tmp_path, monkey
     assert diagnostics['excluded_records']['duplicate_records'] == 1
 
 
-def test_native_grok_future_activity_does_not_invalidate_a_past_interval(tmp_path):
-    session = tmp_path / 'project/session'
-    session.mkdir(parents=True)
-    log = session / 'updates.jsonl'
-    def item(hour):
-        return {'params': {'_meta': {'agentTimestampMs': int(datetime(2024, 1, 5, hour, tzinfo=timezone.utc).timestamp() * 1000)},
-                           'update': {'sessionUpdate': 'agent_message_chunk'}}}
+def test_grok_cli_requires_explicit_billing_assumption(monkeypatch):
+    r = record(source='grok_native', billing='xai', model='grok-4.7-build', input_non_cached=100)
+    monkeypatch.setitem(plan_sources.SOURCES, 'opencode', lambda *_: iter(()))
+    monkeypatch.setattr(plan_sources, 'iter_grok_cli_records', lambda *_, **kw: iter([r]))
     start = datetime(2024, 1, 5, tzinfo=timezone.utc)
-    end = datetime(2024, 1, 5, 12, tzinfo=timezone.utc)
-    log.write_text(json.dumps(item(13)))
-    assert not plan_sources._native_grok_activity(tmp_path, start, end)
-    log.write_text(json.dumps(item(11)))
-    assert plan_sources._native_grok_activity(tmp_path, start, end)
+    end = datetime(2024, 1, 6, tzinfo=timezone.utc)
+    events, diagnostic = plan_sources.collect_usage({'grok'}, start, end)
+    assert not events and 'grok_native' in diagnostic['source_errors']
+    events, diagnostic = plan_sources.collect_usage({'grok'}, start, end, assume_grok_cli_subscription=True)
+    assert [(e.plan, e.source, e.tokens) for e in events] == [('grok', 'grok_native', 100)]
+    assert not diagnostic['source_errors']

@@ -83,7 +83,7 @@ many tokens did DeepSeek use between 14:00 and 18:00?"). Bounds accept a full
 ISO datetime or a bare date (local midnight); a bare `--from` with no `--to`
 means that whole day. `--provider <bucket>` filters to one provider.
 
-Every local source (OpenCode, DSH, Claude Code, Codex, Antigravity) is
+Every local source (OpenCode, DSH, Claude Code, Codex, Antigravity, Grok Build CLI) is
 timestamp-precise; Cursor depends on a recent cloud CSV export. A full-day
 window equals the dashboard's day row (same tokens and cost): cost uses the
 canonical split and the same provider basis (Cursor tokens are counted but not
@@ -140,9 +140,12 @@ Use `estimated` or `known_limit` only with their stated assumptions. Inspect
 `quota_stale`, `quota_unavailable`, window-identity states, or
 `unstable_measurement` before making a capacity claim. Legacy Antigravity family
 maxima do not identify shared billing allocations; explicit shared buckets do.
-Detected native Grok CLI
-activity is not covered by the token adapters. Genuine missing data is not $0
-capacity, and a meter that does not move is not an unlimited plan.
+Native Grok CLI usage appears in daily totals and model breakdowns. Historical
+CLI logs don't identify subscription versus API-key billing. Include them in
+quota calibration with `--assume-grok-cli-subscription` only for a history known
+or explicitly assumed to use the same subscription. Report `token_equivalent`
+as an extrapolation for the observed token mix, not a fixed token limit.
+Genuine missing data is not $0 capacity, and a flat meter is not an unlimited plan.
 
 ## Quota & Usage History
 

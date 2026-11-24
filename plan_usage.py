@@ -65,7 +65,7 @@ def _pool_records(plan: str, label: str, samples: list[dict], usage: list[UsageE
     return sorted(result, key=lambda e: utc_time(e.time))
 
 
-def _fit(xs: list[float], ys: list[float]) -> dict | None:
+def _fit(xs: list[float], ys: list[float], *, capacity_key: str = 'capacity_usd') -> dict | None:
     mx, my = math.fsum(xs) / len(xs), math.fsum(ys) / len(ys)
     variance = math.fsum((x - mx) ** 2 for x in xs)
     if variance <= 0:
@@ -76,7 +76,7 @@ def _fit(xs: list[float], ys: list[float]) -> dict | None:
     intercept = my - slope * mx
     residuals = [y - (intercept + slope * x) for x, y in zip(xs, ys)]
     total_variance = math.fsum((y - my) ** 2 for y in ys)
-    return {'capacity_usd': 100 / slope,
+    return {capacity_key: 100 / slope,
             'r_squared': 1 - math.fsum(r * r for r in residuals) / total_variance if total_variance else None,
             'max_residual_percentage_points': max(abs(r) for r in residuals)}
 
@@ -122,6 +122,20 @@ def estimate_segment(plan: str, label: str, samples: list[dict], usage: list[Usa
         result['status'] = 'usage_missing'
         result['reason'] = 'Quota changed, but no corresponding local usage was found.'
         return result
+    if plan == 'grok':
+        source_tokens: Counter[str] = Counter()
+        token_prefix = [0]
+        for record in matched:
+            source_tokens[record.source] += record.tokens
+            token_prefix.append(token_prefix[-1] + record.tokens)
+        result['tokens_by_source'] = dict(source_tokens)
+        if result['tokens']:
+            result['token_equivalent'] = {
+                'endpoint_capacity_tokens': round(result['tokens'] * 100 / delta),
+                'fit': _fit([token_prefix[bisect_left(times, s['_time']) - lo] for s in samples],
+                            [float(s['percentage']) for s in samples], capacity_key='capacity_tokens'),
+                'basis': 'Observed token mix, not an official fixed token limit.',
+            }
     if plan == 'antigravity' and not (
         first.get('quota_scope') == 'shared_bucket'
         and first.get('pool_id') in (
@@ -261,7 +275,8 @@ def analyze_plan(plan: str, samples: Iterable[dict], usage: list[UsageEvent], *,
 
 
 def build_report(plans: list[str], *, days: float = 7, path: str | None = None, window: str | None = None,
-                 min_change: float = 3, now: datetime | None = None) -> dict:
+                 min_change: float = 3, now: datetime | None = None,
+                 assume_grok_cli_subscription: bool = False) -> dict:
     if not math.isfinite(days) or not math.isfinite(min_change) or days <= 0 or min_change <= 0:
         raise ValueError('days and min_change must be positive')
     end = utc_time(now or datetime.now(timezone.utc))
@@ -288,7 +303,10 @@ def build_report(plans: list[str], *, days: float = 7, path: str | None = None, 
         earliest = min(utc_time(s['observed_at']) for s in samples)
         latest = max(utc_time(s['observed_at']) for s in samples)
         active = {s['provider'] for s in samples}
-        events, diagnostics = collect_usage(active, earliest, latest)
+        if assume_grok_cli_subscription:
+            events, diagnostics = collect_usage(active, earliest, latest, assume_grok_cli_subscription=True)
+        else:
+            events, diagnostics = collect_usage(active, earliest, latest)
     results = [analyze_plan(p, samples, events, min_change=min_change,
                            source_errors=diagnostics['source_errors']) for p in plans]
     for result in results:
@@ -296,7 +314,8 @@ def build_report(plans: list[str], *, days: float = 7, path: str | None = None, 
             result['status'] = 'window_unavailable'
     return {'schema_version': 1, 'generated_at': end.isoformat(),
             'history_start': start.isoformat(), 'history_end': end.isoformat(), 'snapshot_count': len(samples),
-            'projection_assumption': 'Nominal weekly cadence; extra resets are not forecast or included in the monthly equivalent.',
+             'projection_assumption': 'Nominal weekly cadence; extra resets are not forecast or included in the monthly equivalent.',
+             'assume_grok_cli_subscription': assume_grok_cli_subscription,
             'price_basis': {'ollama': {'source': OLLAMA_PRICE_URL, 'as_of': OLLAMA_PRICE_DATE},
                             'cursor': 'recorded charged cents for included plan calls',
                             'others': 'current pricing_config API reference rates'},
@@ -336,13 +355,16 @@ def main() -> None:
     parser.add_argument('--window', help='Window kind or label, e.g. 7d, 5h, Weekly, Models')
     parser.add_argument('--history-db', help='Override the local history database')
     parser.add_argument('--min-change', type=float, default=3, help='Minimum movement in percentage points')
+    parser.add_argument('--assume-grok-cli-subscription', action='store_true',
+                        help='Assume native Grok CLI usage in the selected history was on the same subscription as the quota snapshots')
     parser.add_argument('--json', action='store_true')
     args = parser.parse_args()
     import auto_usage
     auto_usage.load_env()
     try:
         report = build_report(list(PLANS) if args.all_plans else [args.plan], days=args.days,
-                              path=args.history_db, window=args.window, min_change=args.min_change)
+                              path=args.history_db, window=args.window, min_change=args.min_change,
+                              assume_grok_cli_subscription=args.assume_grok_cli_subscription)
     except (ValueError, OSError, sqlite3.Error) as exc:
         parser.error(str(exc))
     print(json.dumps(report, indent=2, allow_nan=False) if args.json else format_report(report))
